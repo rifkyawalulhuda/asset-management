@@ -17,7 +17,7 @@ class AcquisitionDisposal(Base):
     bookslip_no = Column(String(50))
     asset_name = Column(String(500))
     price = Column(Numeric(20, 4))
-    status = Column(String(20))
+    status = Column(String(50))
     vendor_customer = Column(String(200))
     year_ref = Column(Integer)
     created_at = Column(DateTime, server_default=func.now())

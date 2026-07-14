@@ -85,9 +85,9 @@ def list_assets(
 @router.post("", response_model=FixedAssetResponse, status_code=201)
 def create_asset(payload: FixedAssetCreate, db: Session = Depends(get_db)):
     existing = db.query(FixedAsset).filter(
-        FixedAsset.asset_no == payload.asset_no,
+        FixedAsset.fixed_asset_number_ax == payload.fixed_asset_number_ax,
         FixedAsset.year_ref == (payload.year_ref or 2026),
-    ).first()
+    ).first() if payload.fixed_asset_number_ax else None
     if existing:
         raise HTTPException(status_code=400, detail=f"Asset no '{payload.asset_no}' already exists")
 

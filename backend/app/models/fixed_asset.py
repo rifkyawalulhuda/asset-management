@@ -26,7 +26,7 @@ class FixedAsset(Base):
     machine_no = Column(String(50))
     chasis_no = Column(String(50))
     quantity = Column(Integer, default=1)
-    valas = Column(String(20))
+    valas = Column(String(100))
     purchase_price = Column(Numeric(20, 4))
     monthly_depreciation = Column(Numeric(20, 4))
     depreciation_period_total = Column(Integer)
@@ -42,14 +42,14 @@ class FixedAsset(Base):
     status_additional = Column(Boolean, default=False)
     status_disposals = Column(Boolean, default=False)
     condition = Column(String(100))
-    photo_status = Column(String(20))
+    photo_status = Column(String(50))
     remark = Column(Text)
     year_ref = Column(Integer, default=2026, index=True)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
     __table_args__ = (
-        UniqueConstraint('asset_no', 'year_ref', name='uq_asset_no_year_ref'),
+        UniqueConstraint('fixed_asset_number_ax', 'year_ref', name='uq_ax_year_ref'),
     )
 
     depreciation_monthly = relationship(
