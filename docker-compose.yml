@@ -1,7 +1,7 @@
-version: '3.8'
 services:
   db:
     image: postgres:16
+    container_name: asset-depre-db-1
     environment:
       POSTGRES_DB: sankyu_assets
       POSTGRES_USER: sankyu
@@ -10,22 +10,7 @@ services:
       - "5436:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-  backend:
-    build: ./backend
-    ports:
-      - "8000:8000"
-    environment:
-      DATABASE_URL: postgresql://sankyu:sankyu123@db:5432/sankyu_assets
-    depends_on:
-      - db
-    volumes:
-      - ./backend:/app
-      - ./Est-Depreciation_Calculation_for_2026_.xlsx:/data/assets.xlsx
-  frontend:
-    build: ./frontend
-    ports:
-      - "5173:5173"
-    depends_on:
-      - backend
+    restart: unless-stopped
+
 volumes:
   postgres_data:
