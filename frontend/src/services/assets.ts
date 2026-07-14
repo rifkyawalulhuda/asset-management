@@ -47,13 +47,24 @@ export const deleteAcquisition = async (id: number): Promise<void> => {
 }
 
 // Summary
-export const fetchSummaryMonthly = async (year_ref: number): Promise<SummaryMonthly> => {
-  const { data } = await api.get('/summary/monthly', { params: { year_ref } })
+export const fetchSummaryMonthly = async (year_ref: number, site_location?: string): Promise<SummaryMonthly> => {
+  const params: Record<string, unknown> = { year_ref }
+  if (site_location) params.site_location = site_location
+  const { data } = await api.get('/summary/monthly', { params })
   return data
 }
 
-export const fetchSummaryByGroup = async (year_ref: number): Promise<SummaryByGroup> => {
-  const { data } = await api.get('/summary/by-group', { params: { year_ref } })
+export const fetchSummaryByGroup = async (year_ref: number, site_location?: string): Promise<SummaryByGroup> => {
+  const params: Record<string, unknown> = { year_ref }
+  if (site_location) params.site_location = site_location
+  const { data } = await api.get('/summary/by-group', { params })
+  return data
+}
+
+export const fetchSummaryTotals = async (year_ref: number, site_location?: string) => {
+  const params: Record<string, unknown> = { year_ref }
+  if (site_location) params.site_location = site_location
+  const { data } = await api.get('/summary/totals', { params })
   return data
 }
 
