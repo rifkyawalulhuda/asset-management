@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
-  Legend, ResponsiveContainer,
+  Legend,
 } from 'recharts'
 import {
   fetchSummaryMonthly,
@@ -26,13 +26,6 @@ function idr(v: number | null | undefined) {
   return 'Rp ' + new Intl.NumberFormat('id-ID').format(Math.round(Number(v)))
 }
 
-function idrShort(v: number) {
-  if (v >= 1e12) return `${(v / 1e12).toFixed(2)}T`
-  if (v >= 1e9) return `${(v / 1e9).toFixed(2)}B`
-  if (v >= 1e6) return `${(v / 1e6).toFixed(1)}M`
-  return new Intl.NumberFormat('id-ID').format(Math.round(v))
-}
-
 export default function Dashboard() {
   const [year, setYear] = useState(2026)
   const [site, setSite] = useState<string | undefined>(undefined)
@@ -48,16 +41,19 @@ export default function Dashboard() {
   const { data: totals, isLoading: loadingTotals } = useQuery({
     queryKey: ['summary-totals', year, site],
     queryFn: () => fetchSummaryTotals(year, site),
+    retry: 1,
   })
 
   const { data: monthly, isLoading: loadingMonthly } = useQuery({
     queryKey: ['summary-monthly', year, site],
     queryFn: () => fetchSummaryMonthly(year, site),
+    retry: 1,
   })
 
   const { data: byGroup } = useQuery({
     queryKey: ['summary-group', year, site],
     queryFn: () => fetchSummaryByGroup(year, site),
+    retry: 1,
   })
 
   // Build chart data: one entry per month, one key per job
@@ -180,30 +176,42 @@ export default function Dashboard() {
             </p>
           </div>
         </div>
-        {loadingMonthly ? (
-          <div className="h-64 flex items-center justify-center text-gray-400">Loading...</div>
+        {!monthly || jobs.length === 0 ? (
+          <div className="h-64 flex items-center justify-center text-gray-400">
+            {loadingMonthly ? 'Loading...' : 'No data available'}
+          </div>
         ) : (
-          <ResponsiveContainer width="100%" height={300}>
-            <BarChart data={chartData} margin={{ top: 5, right: 20, left: 20, bottom: 5 }}>
+          <div className="overflow-x-auto w-full">
+            <BarChart
+              width={1000}
+              height={320}
+              data={chartData}
+              margin={{ top: 10, right: 30, left: 60, bottom: 5 }}
+            >
               <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
               <XAxis dataKey="name" tick={{ fontSize: 11 }} />
-              <YAxis tickFormatter={idrShort} tick={{ fontSize: 10 }} width={70} />
+              <YAxis
+                tickFormatter={v => `${(v / 1e9).toFixed(1)}B`}
+                tick={{ fontSize: 10 }}
+                width={60}
+              />
               <Tooltip
                 formatter={(v: number, name: string) => [idr(v), name]}
                 labelFormatter={l => `Month: ${l}`}
               />
-              <Legend wrapperStyle={{ fontSize: 11 }} />
-              {jobs.map((job, i) => (
+              <Legend wrapperStyle={{ fontSize: 10 }} />
+              {jobs.slice(0, 15).map((job, i) => (
                 <Bar
                   key={job}
                   dataKey={job}
                   stackId="a"
                   fill={JOB_COLORS[i % JOB_COLORS.length]}
                   name={job}
+                  isAnimationActive={false}
                 />
               ))}
             </BarChart>
-          </ResponsiveContainer>
+          </div>
         )}
       </div>
 
