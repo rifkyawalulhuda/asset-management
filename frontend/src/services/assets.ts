@@ -90,3 +90,41 @@ export const importExcel = async (file: File) => {
   })
   return data
 }
+
+// Forecast
+export const fetchForecastTotals = async (forecast_year: number, site_location?: string) => {
+  const params: Record<string, unknown> = { forecast_year }
+  if (site_location) params.site_location = site_location
+  const { data } = await api.get('/forecast/totals', { params })
+  return data
+}
+
+export const fetchForecastMonthly = async (forecast_year: number, site_location?: string, group_by?: 'job' | 'category' | 'group_name') => {
+  const params: Record<string, unknown> = { forecast_year }
+  if (site_location) params.site_location = site_location
+  if (group_by) params.group_by = group_by
+  const { data } = await api.get('/forecast/monthly', { params })
+  return data
+}
+
+export const fetchForecastByGroup = async (forecast_year: number, site_location?: string) => {
+  const params: Record<string, unknown> = { forecast_year }
+  if (site_location) params.site_location = site_location
+  const { data } = await api.get('/forecast/by-group', { params })
+  return data
+}
+
+export const fetchForecastByCategory = async (forecast_year: number, site_location?: string) => {
+  const params: Record<string, unknown> = { forecast_year }
+  if (site_location) params.site_location = site_location
+  const { data } = await api.get('/forecast/by-category', { params })
+  return data
+}
+
+export const fetchForecastAssets = async (
+  forecast_year: number,
+  params?: { site_location?: string; group_name?: string; category?: string; search?: string; page?: number; size?: number }
+) => {
+  const { data } = await api.get('/forecast/assets', { params: { forecast_year, ...params } })
+  return data
+}

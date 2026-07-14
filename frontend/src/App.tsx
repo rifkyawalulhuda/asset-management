@@ -8,6 +8,7 @@ import AssetForm from './pages/AssetForm'
 import SummaryReport from './pages/SummaryReport'
 import Acquisitions from './pages/Acquisitions'
 import ImportExcel from './pages/ImportExcel'
+import ForecastPage from './pages/ForecastPage'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -29,6 +30,7 @@ function App() {
             <Route path="summary" element={<SummaryReport />} />
             <Route path="acquisitions" element={<Acquisitions />} />
             <Route path="import" element={<ImportExcel />} />
+            <Route path="forecast" element={<ForecastPage />} />
           </Route>
         </Routes>
       </BrowserRouter>

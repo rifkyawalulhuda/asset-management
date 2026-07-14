@@ -3,6 +3,7 @@ import { Outlet, NavLink } from 'react-router-dom'
 const navItems = [
   { to: '/', label: 'Dashboard', end: true },
   { to: '/assets', label: 'Fixed Assets' },
+  { to: '/forecast', label: 'Forecast' },
   { to: '/summary', label: 'Summary Report' },
   { to: '/acquisitions', label: 'Acquisitions' },
   { to: '/import', label: 'Import Excel' },
