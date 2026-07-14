@@ -133,7 +133,9 @@ export default function Dashboard() {
         ) : (
           <SvgBarChart
             months={MONTHS}
-            monthlyTotals={monthlyTotals}
+            monthKeys={MONTH_KEYS}
+            jobs={jobs}
+            monthly={monthly!}
             maxTotal={maxMonthlyTotal}
           />
         )}
@@ -260,40 +262,45 @@ function StatCard({ label, value, sub, color, loading }: {
   )
 }
 
-// SVG Bar Chart — deterministic, no Recharts dependency
+// SVG Stacked Bar Chart — deterministic, fully reactive to data changes
 function SvgBarChart({
   months,
-  monthlyTotals,
+  monthKeys,
+  jobs,
+  monthly,
   maxTotal,
 }: {
   months: string[]
-  monthlyTotals: number[]
+  monthKeys: string[]
+  jobs: string[]
+  monthly: Record<string, Record<string, number>>
   maxTotal: number
 }) {
-  const W = 780          // total SVG width
-  const H = 220          // chart area height
-  const PAD_L = 70       // left padding for Y-axis labels
-  const PAD_R = 20       // right padding
-  const PAD_T = 20       // top padding
-  const PAD_B = 30       // bottom padding for X-axis labels
+  const W = 800
+  const H = 240
+  const PAD_L = 72
+  const PAD_R = 16
+  const PAD_T = 24
+  const PAD_B = 28
   const chartW = W - PAD_L - PAD_R
   const chartH = H - PAD_T - PAD_B
-  const barCount = months.length
-  const groupW = chartW / barCount
-  const barW = Math.max(groupW * 0.6, 20)
-  const barGap = (groupW - barW) / 2
+  const groupW = chartW / months.length
+  const barW = Math.max(groupW * 0.65, 18)
+  const barOffset = (groupW - barW) / 2
 
-  // Y-axis gridlines (5 levels)
-  const gridLevels = 5
-  const yTicks = Array.from({ length: gridLevels + 1 }, (_, i) => i / gridLevels)
+  // Y-axis ticks
+  const yTicks = [0, 0.25, 0.5, 0.75, 1.0]
 
   return (
     <svg
       viewBox={`0 0 ${W} ${H}`}
       width="100%"
-      style={{ display: 'block', maxHeight: 220 }}
+      style={{ display: 'block', height: 240 }}
     >
-      {/* Grid lines + Y labels */}
+      {/* Background */}
+      <rect x={PAD_L} y={PAD_T} width={chartW} height={chartH} fill="#f8fafc" rx={4} />
+
+      {/* Y-axis gridlines + labels */}
       {yTicks.map((t, i) => {
         const y = PAD_T + chartH * (1 - t)
         const val = maxTotal * t
@@ -302,14 +309,16 @@ function SvgBarChart({
             <line
               x1={PAD_L} y1={y}
               x2={PAD_L + chartW} y2={y}
-              stroke={i === 0 ? '#94a3b8' : '#e2e8f0'}
-              strokeWidth={i === 0 ? 1.5 : 1}
+              stroke={t === 0 ? '#cbd5e1' : '#e2e8f0'}
+              strokeWidth={t === 0 ? 1.5 : 1}
+              strokeDasharray={t === 0 ? 'none' : '4 3'}
             />
             <text
-              x={PAD_L - 6} y={y + 4}
+              x={PAD_L - 8} y={y + 4}
               textAnchor="end"
-              fontSize={10}
+              fontSize={9}
               fill="#94a3b8"
+              fontFamily="system-ui, sans-serif"
             >
               {idrShort(val)}
             </text>
@@ -317,55 +326,93 @@ function SvgBarChart({
         )
       })}
 
-      {/* Bars */}
+      {/* Stacked bars per month */}
       {months.map((month, mi) => {
-        const total = monthlyTotals[mi]
-        const barH = maxTotal > 0 ? (total / maxTotal) * chartH : 0
-        const x = PAD_L + mi * groupW + barGap
-        const y = PAD_T + chartH - barH
+        const monthKey = monthKeys[mi]
+        const x = PAD_L + mi * groupW + barOffset
+        const baseY = PAD_T + chartH
+
+        // Build segments from bottom to top
+        let stackedH = 0
+        const total = jobs.reduce((s, job) => s + ((monthly[job]?.[monthKey]) || 0), 0)
+
+        const segments = jobs.map((job, ji) => {
+          const val = (monthly[job]?.[monthKey]) || 0
+          const segH = maxTotal > 0 ? (val / maxTotal) * chartH : 0
+          return { job, val, segH, color: JOB_COLORS[ji % JOB_COLORS.length] }
+        }).filter(s => s.segH > 0.5) // skip segments too small to show
 
         return (
-          <g key={month}>
-            {/* Bar */}
-            <rect
-              x={x}
-              y={y}
-              width={barW}
-              height={Math.max(barH, 0)}
-              fill="#1d4ed8"
-              rx={3}
-              opacity={0.85}
-            >
-              <title>{month}: {idr(total)}</title>
-            </rect>
+          <g key={`${month}-${mi}`}>
+            {/* Render segments bottom-to-top */}
+            {segments.map(seg => {
+              const y = baseY - stackedH - seg.segH
+              stackedH += seg.segH
+              return (
+                <rect
+                  key={seg.job}
+                  x={x}
+                  y={y}
+                  width={barW}
+                  height={seg.segH}
+                  fill={seg.color}
+                  opacity={0.88}
+                >
+                  <title>{month} · {seg.job}: {idr(seg.val)}</title>
+                </rect>
+              )
+            })}
 
-            {/* Value label on top of bar */}
-            {barH > 18 && (
+            {/* Rounded top cap on last segment */}
+            {stackedH > 4 && (
+              <rect
+                x={x}
+                y={baseY - stackedH}
+                width={barW}
+                height={Math.min(4, stackedH)}
+                fill={segments[segments.length - 1]?.color || '#1d4ed8'}
+                rx={3}
+                opacity={0.88}
+              />
+            )}
+
+            {/* Total label above bar */}
+            {stackedH > 14 && (
               <text
                 x={x + barW / 2}
-                y={y - 4}
+                y={baseY - stackedH - 4}
                 textAnchor="middle"
-                fontSize={9}
+                fontSize={8}
                 fill="#475569"
+                fontFamily="system-ui, sans-serif"
               >
                 {idrShort(total)}
               </text>
             )}
 
-            {/* X-axis label */}
+            {/* X-axis month label */}
             <text
               x={x + barW / 2}
               y={PAD_T + chartH + 18}
               textAnchor="middle"
               fontSize={11}
               fill="#64748b"
-              fontWeight="500"
+              fontWeight="600"
+              fontFamily="system-ui, sans-serif"
             >
               {month}
             </text>
           </g>
         )
       })}
+
+      {/* Left axis border */}
+      <line
+        x1={PAD_L} y1={PAD_T}
+        x2={PAD_L} y2={PAD_T + chartH}
+        stroke="#cbd5e1"
+        strokeWidth={1.5}
+      />
     </svg>
   )
 }
