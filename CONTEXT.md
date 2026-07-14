@@ -1,6 +1,6 @@
 # Project Context: Fixed Asset & Depreciation App
 **PT. Sankyu Indonesia International**
-Last updated: 2026-07-14
+Last updated: 2026-07-14 (rev 2)
 
 ---
 
@@ -64,11 +64,13 @@ E:\Github\asset-management\
 │       │   ├── Acquisitions.tsx      # Acquisition/disposal CRUD
 │       │   └── ImportExcel.tsx       # Drag & drop XLSX upload
 │       ├── services/
-│       │   ├── api.ts                # axios instance (baseURL: http://localhost:8000/api)
+│       │   ├── api.ts                # axios instance — baseURL dari VITE_API_URL env var (fallback localhost:8000/api)
 │       │   └── assets.ts             # All API service functions incl. fetchForecast* functions
 │       ├── types/index.ts            # TypeScript interfaces
-│       └── utils/format.ts           # formatIDR, formatDate, formatNumber
-├── docker-compose.yml                # PostgreSQL on port 5436
+│       └── utils/format.ts           # formatIDR/formatNumber — accept string|number (FastAPI Decimal → string fix)
+├── docker-compose.yml                # PostgreSQL only (backend & frontend services dihapus — tidak terpakai)
+├── start.bat                         # One-click startup: Docker DB + Backend + Frontend
+├── DEPLOY.md                         # Panduan deploy ke Windows 11 baru
 ├── Est-Depreciation_Calculation_for_2026_.xlsx  # File lama (header row 23-24, has Category col)
 └── Fixed Asset_202606.xlsx           # File baru (header row 7-8, no Category col)
 ```
@@ -348,6 +350,9 @@ Styling: bold headers, fill colors, auto column width, freeze row 1, number form
 - `uq_asset_no_year_ref` → changed to `uq_ax_year_ref`
 - `purchase_date=""` from react-hook-form → 422 on PUT → fixed by cleaning empty strings to null in `onSubmit`
 - Summary inconsistency: `/by-group` used `dep_expense_current` (stale Excel snapshot) while `/monthly` used `depreciation_monthly.amount` → fixed all summary to use `depreciation_monthly` as source
+- `AssetDetail` Total/Year showing `RpNaN` → FastAPI serializes Python `Decimal` as string → fixed `formatIDR`/`formatNumber` in `format.ts` to accept `string|number` and call `Number()` before format; also fixed `reduce` in `AssetDetail.tsx` to use `Number(d.amount || 0)`
+- `docker-compose.yml` contained unused `backend` and `frontend` services → removed, kept only `db` service with explicit `container_name: asset-depre-db-1`
+- `start.bat` used `docker-compose` (v1) → updated to `docker compose` (v2); also added smart container detection to avoid port conflict when `asset-depre-db-1` already running
 
 ---
 
