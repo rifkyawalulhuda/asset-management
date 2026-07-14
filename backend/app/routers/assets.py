@@ -1,4 +1,4 @@
-from typing import Optional, List
+from typing import Optional, List, Union
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import or_
@@ -16,6 +16,31 @@ from app.schemas.depreciation_monthly import DepreciationMonthlyResponse
 from app.services.depreciation import recalculate_asset
 
 router = APIRouter(prefix="/assets", tags=["assets"])
+
+
+def get_asset_by_key(key: str, db: Session) -> FixedAsset:
+    """Lookup asset by fixed_asset_number_ax (e.g. BLD000048).
+    Falls back to integer id for assets without an AX number."""
+    # Try fixed_asset_number_ax first
+    asset = (
+        db.query(FixedAsset)
+        .options(joinedload(FixedAsset.depreciation_monthly))
+        .filter(FixedAsset.fixed_asset_number_ax == key)
+        .first()
+    )
+    if asset:
+        return asset
+    # Fallback: try integer id
+    if key.isdigit():
+        asset = (
+            db.query(FixedAsset)
+            .options(joinedload(FixedAsset.depreciation_monthly))
+            .filter(FixedAsset.id == int(key))
+            .first()
+        )
+    if not asset:
+        raise HTTPException(status_code=404, detail=f"Asset '{key}' not found")
+    return asset
 
 
 @router.get("", response_model=FixedAssetListResponse)
@@ -75,24 +100,14 @@ def create_asset(payload: FixedAssetCreate, db: Session = Depends(get_db)):
     return asset
 
 
-@router.get("/{asset_id}", response_model=FixedAssetResponse)
-def get_asset(asset_id: int, db: Session = Depends(get_db)):
-    asset = (
-        db.query(FixedAsset)
-        .options(joinedload(FixedAsset.depreciation_monthly))
-        .filter(FixedAsset.id == asset_id)
-        .first()
-    )
-    if not asset:
-        raise HTTPException(status_code=404, detail="Asset not found")
-    return asset
+@router.get("/{asset_key}", response_model=FixedAssetResponse)
+def get_asset(asset_key: str, db: Session = Depends(get_db)):
+    return get_asset_by_key(asset_key, db)
 
 
-@router.put("/{asset_id}", response_model=FixedAssetResponse)
-def update_asset(asset_id: int, payload: FixedAssetUpdate, db: Session = Depends(get_db)):
-    asset = db.query(FixedAsset).filter(FixedAsset.id == asset_id).first()
-    if not asset:
-        raise HTTPException(status_code=404, detail="Asset not found")
+@router.put("/{asset_key}", response_model=FixedAssetResponse)
+def update_asset(asset_key: str, payload: FixedAssetUpdate, db: Session = Depends(get_db)):
+    asset = get_asset_by_key(asset_key, db)
 
     update_data = payload.model_dump(exclude_unset=True)
     for key, value in update_data.items():
@@ -104,26 +119,22 @@ def update_asset(asset_id: int, payload: FixedAssetUpdate, db: Session = Depends
     return asset
 
 
-@router.delete("/{asset_id}", status_code=204)
-def delete_asset(asset_id: int, db: Session = Depends(get_db)):
-    asset = db.query(FixedAsset).filter(FixedAsset.id == asset_id).first()
-    if not asset:
-        raise HTTPException(status_code=404, detail="Asset not found")
+@router.delete("/{asset_key}", status_code=204)
+def delete_asset(asset_key: str, db: Session = Depends(get_db)):
+    asset = get_asset_by_key(asset_key, db)
     db.delete(asset)
     db.commit()
 
 
-@router.get("/{asset_id}/depreciation", response_model=List[DepreciationMonthlyResponse])
+@router.get("/{asset_key}/depreciation", response_model=List[DepreciationMonthlyResponse])
 def get_asset_depreciation(
-    asset_id: int,
+    asset_key: str,
     year: Optional[int] = None,
     db: Session = Depends(get_db),
 ):
-    asset = db.query(FixedAsset).filter(FixedAsset.id == asset_id).first()
-    if not asset:
-        raise HTTPException(status_code=404, detail="Asset not found")
+    asset = get_asset_by_key(asset_key, db)
 
-    query = db.query(DepreciationMonthly).filter(DepreciationMonthly.asset_id == asset_id)
+    query = db.query(DepreciationMonthly).filter(DepreciationMonthly.asset_id == asset.id)
     if year:
         query = query.filter(DepreciationMonthly.year == year)
     return query.order_by(DepreciationMonthly.year, DepreciationMonthly.month).all()

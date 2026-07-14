@@ -87,12 +87,14 @@ export default function AssetList() {
             {isLoading && (
               <tr><td colSpan={12} className="text-center py-8 text-gray-400">Loading...</td></tr>
             )}
-            {data?.items.map(asset => (
-              <tr key={asset.id} className="border-t hover:bg-gray-50">
+            {data?.items.map(asset => {
+              const key = asset.fixed_asset_number_ax || String(asset.id)
+              return (
+              <tr key={key} className="border-t hover:bg-gray-50">
                 <td className="px-3 py-2 text-gray-500">{asset.no}</td>
                 <td className="px-3 py-2 font-mono text-xs">{asset.asset_no}</td>
                 <td className="px-3 py-2 max-w-xs">
-                  <Link to={`/assets/${asset.id}`} className="text-blue-700 hover:underline font-medium">
+                  <Link to={`/assets/${key}`} className="text-blue-700 hover:underline font-medium">
                     {asset.name}
                   </Link>
                   {asset.fixed_asset_number_ax && (
@@ -115,7 +117,7 @@ export default function AssetList() {
                 </td>
                 <td className="px-3 py-2">
                   <div className="flex gap-2">
-                    <Link to={`/assets/${asset.id}/edit`} className="text-xs text-blue-600 hover:underline">Edit</Link>
+                    <Link to={`/assets/${key}/edit`} className="text-xs text-blue-600 hover:underline">Edit</Link>
                     <button
                       onClick={() => { if (confirm(`Delete ${asset.name}?`)) deleteMut.mutate(asset.id) }}
                       className="text-xs text-red-500 hover:underline"
@@ -123,7 +125,8 @@ export default function AssetList() {
                   </div>
                 </td>
               </tr>
-            ))}
+              )
+            })}
           </tbody>
         </table>
       </div>

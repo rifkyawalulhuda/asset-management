@@ -7,8 +7,8 @@ export const fetchAssets = async (filters: AssetFilters = {}): Promise<FixedAsse
   return data
 }
 
-export const fetchAsset = async (id: number): Promise<FixedAsset> => {
-  const { data } = await api.get(`/assets/${id}`)
+export const fetchAsset = async (key: string): Promise<FixedAsset> => {
+  const { data } = await api.get(`/assets/${key}`)
   return data
 }
 
@@ -17,8 +17,8 @@ export const createAsset = async (payload: Partial<FixedAsset>): Promise<FixedAs
   return data
 }
 
-export const updateAsset = async (id: number, payload: Partial<FixedAsset>): Promise<FixedAsset> => {
-  const { data } = await api.put(`/assets/${id}`, payload)
+export const updateAsset = async (key: string, payload: Partial<FixedAsset>): Promise<FixedAsset> => {
+  const { data } = await api.put(`/assets/${key}`, payload)
   return data
 }
 

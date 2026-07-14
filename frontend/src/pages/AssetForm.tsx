@@ -46,7 +46,7 @@ export default function AssetForm() {
 
   const { data: asset } = useQuery({
     queryKey: ['asset', id],
-    queryFn: () => fetchAsset(Number(id)),
+    queryFn: () => fetchAsset(id!),
     enabled: isEdit,
   })
 
@@ -66,16 +66,20 @@ export default function AssetForm() {
 
   const createMut = useMutation({
     mutationFn: createAsset,
-    onSuccess: (data) => { qc.invalidateQueries({ queryKey: ['assets'] }); navigate(`/assets/${data.id}`) },
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ['assets'] })
+      const key = data.fixed_asset_number_ax || String(data.id)
+      navigate(`/assets/${key}`)
+    },
   })
 
   const updateMut = useMutation({
-    mutationFn: ({ id, data }: { id: number; data: Partial<FormData> }) => updateAsset(id, data),
+    mutationFn: ({ key, data }: { key: string; data: Partial<FormData> }) => updateAsset(key, data),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['assets'] }); navigate(`/assets/${id}`) },
   })
 
   const onSubmit = (data: FormData) => {
-    if (isEdit) updateMut.mutate({ id: Number(id), data })
+    if (isEdit) updateMut.mutate({ key: id!, data })
     else createMut.mutate(data)
   }
 

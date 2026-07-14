@@ -10,7 +10,7 @@ export default function AssetDetail() {
   const navigate = useNavigate()
   const { data: asset, isLoading } = useQuery({
     queryKey: ['asset', id],
-    queryFn: () => fetchAsset(Number(id)),
+    queryFn: () => fetchAsset(id!),
     enabled: !!id,
   })
 
