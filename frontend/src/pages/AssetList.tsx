@@ -1,9 +1,24 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { fetchAssets, deleteAsset, fetchSiteLocations } from '../services/assets'
 import { formatDate } from '../utils/format'
 import type { AssetFilters, FixedAsset } from '../types'
+
+// Sort config type
+type SortConfig = { key: string; dir: 'asc' | 'desc' } | null
+
+// Sort icon component
+function SortIcon({ col, sortConfig }: { col: string; sortConfig: SortConfig }) {
+  if (!sortConfig || sortConfig.key !== col) {
+    return <span className="ml-0.5 opacity-40 text-[8px]">↑↓</span>
+  }
+  return (
+    <span className="ml-0.5 text-[9px] text-yellow-300">
+      {sortConfig.dir === 'asc' ? '↑' : '↓'}
+    </span>
+  )
+}
 
 const GROUPS = ['Building', 'Structures', 'Machinary and Equipment', 'Tools Furniture Fixtures', 'Vehicles']
 const CATEGORIES = ['WH1', 'WH2', 'TRP', 'BALI', 'MDN', 'PBG', 'MKS', 'SBY', 'OTHERS']
@@ -47,6 +62,7 @@ export default function AssetList() {
   const qc = useQueryClient()
   const [filters, setFilters] = useState<AssetFilters>({ year_ref: 2026, page: 1, size: 100 })
   const [search, setSearch] = useState('')
+  const [sortConfig, setSortConfig] = useState<SortConfig>(null)
 
   const { data, isLoading } = useQuery({
     queryKey: ['assets', filters],
@@ -68,6 +84,37 @@ export default function AssetList() {
   const handleSearch = () => setFilters(f => ({ ...f, search, page: 1 }))
   const handleFilter = (key: keyof AssetFilters, value: string) =>
     setFilters(f => ({ ...f, [key]: value || undefined, page: 1 }))
+
+  const handleSort = (key: string) => {
+    setSortConfig(prev => {
+      if (!prev || prev.key !== key) return { key, dir: 'asc' }
+      if (prev.dir === 'asc') return { key, dir: 'desc' }
+      return null
+    })
+  }
+
+  const sortedItems = useMemo(() => {
+    const items = data?.items ?? []
+    if (!sortConfig) return items
+    return [...items].sort((a, b) => {
+      const aVal = (a as unknown as Record<string, unknown>)[sortConfig.key]
+      const bVal = (b as unknown as Record<string, unknown>)[sortConfig.key]
+      // nulls always last
+      if (aVal == null && bVal == null) return 0
+      if (aVal == null) return 1
+      if (bVal == null) return -1
+      // numeric
+      if (typeof aVal === 'number' && typeof bVal === 'number') {
+        return sortConfig.dir === 'asc' ? aVal - bVal : bVal - aVal
+      }
+      // string
+      const aStr = String(aVal).toLowerCase()
+      const bStr = String(bVal).toLowerCase()
+      if (aStr < bStr) return sortConfig.dir === 'asc' ? -1 : 1
+      if (aStr > bStr) return sortConfig.dir === 'asc' ? 1 : -1
+      return 0
+    })
+  }, [data?.items, sortConfig])
 
   const year = filters.year_ref || 2026
 
@@ -129,72 +176,72 @@ export default function AssetList() {
             {/* === ROW 1: Group Headers === */}
             <tr>
               {/* Frozen: No */}
-              <th rowSpan={3} className={th(`${C.id} min-w-[32px]`)} style={stickyLeft(0)}>No.</th>
+              <th rowSpan={3} onClick={() => handleSort('no')} className={th(`${C.id} min-w-[32px] cursor-pointer select-none hover:brightness-110`)} style={stickyLeft(0)}>No.<SortIcon col="no" sortConfig={sortConfig}/></th>
               {/* Frozen: Site */}
-              <th rowSpan={3} className={th(`${C.id} min-w-[40px]`)} style={stickyLeft(32)}>Site/<br/>Loc.</th>
+              <th rowSpan={3} onClick={() => handleSort('site_location')} className={th(`${C.id} min-w-[40px] cursor-pointer select-none hover:brightness-110`)} style={stickyLeft(32)}>Site/<br/>Loc.<SortIcon col="site_location" sortConfig={sortConfig}/></th>
               {/* Frozen: Job */}
-              <th rowSpan={3} className={th(`${C.id} min-w-[60px]`)} style={stickyLeft(72)}>Job</th>
+              <th rowSpan={3} onClick={() => handleSort('job')} className={th(`${C.id} min-w-[60px] cursor-pointer select-none hover:brightness-110`)} style={stickyLeft(72)}>Job<SortIcon col="job" sortConfig={sortConfig}/></th>
 
               {/* Identity group */}
-              <th rowSpan={2} className={th(`${C.gray} min-w-[40px]`)}>Account<br/>No.</th>
-              <th rowSpan={2} className={th(`${C.gray} min-w-[50px]`)}>Category</th>
+              <th rowSpan={2} onClick={() => handleSort('account_no')} className={th(`${C.gray} min-w-[40px] cursor-pointer select-none hover:brightness-110`)}>Account<br/>No.<SortIcon col="account_no" sortConfig={sortConfig}/></th>
+              <th rowSpan={2} onClick={() => handleSort('category')} className={th(`${C.gray} min-w-[50px] cursor-pointer select-none hover:brightness-110`)}>Category<SortIcon col="category" sortConfig={sortConfig}/></th>
               {/* Frozen: Asset No */}
-              <th rowSpan={2} className={th(`${C.id} min-w-[80px]`)} style={stickyLeft(132)}>Asset<br/>No.</th>
-              <th rowSpan={2} className={th(`${C.gray} min-w-[80px]`)}>Fixed Asset No.<br/>(AX)</th>
-              <th rowSpan={2} className={th(`${C.gray} min-w-[80px]`)}>Purchase<br/>Date</th>
-              <th rowSpan={2} className={th(`${C.gray} min-w-[100px]`)}>Group</th>
-              <th rowSpan={2} className={th(`${C.gray} min-w-[60px]`)}>Voucher<br/>No.</th>
+              <th rowSpan={2} onClick={() => handleSort('asset_no')} className={th(`${C.id} min-w-[80px] cursor-pointer select-none hover:brightness-110`)} style={stickyLeft(132)}>Asset<br/>No.<SortIcon col="asset_no" sortConfig={sortConfig}/></th>
+              <th rowSpan={2} onClick={() => handleSort('fixed_asset_number_ax')} className={th(`${C.gray} min-w-[80px] cursor-pointer select-none hover:brightness-110`)}>Fixed Asset No.<br/>(AX)<SortIcon col="fixed_asset_number_ax" sortConfig={sortConfig}/></th>
+              <th rowSpan={2} onClick={() => handleSort('purchase_date')} className={th(`${C.gray} min-w-[80px] cursor-pointer select-none hover:brightness-110`)}>Purchase<br/>Date<SortIcon col="purchase_date" sortConfig={sortConfig}/></th>
+              <th rowSpan={2} onClick={() => handleSort('group_name')} className={th(`${C.gray} min-w-[100px] cursor-pointer select-none hover:brightness-110`)}>Group<SortIcon col="group_name" sortConfig={sortConfig}/></th>
+              <th rowSpan={2} onClick={() => handleSort('voucher_no')} className={th(`${C.gray} min-w-[60px] cursor-pointer select-none hover:brightness-110`)}>Voucher<br/>No.<SortIcon col="voucher_no" sortConfig={sortConfig}/></th>
               {/* Frozen: Name */}
-              <th rowSpan={2} className={th(`${C.id} min-w-[200px]`)} style={stickyLeft(212)}>Name of Fixed Asset</th>
-              <th rowSpan={2} className={th(`${C.gray} min-w-[150px]`)}>Maker/Type/Location</th>
-              <th rowSpan={2} className={th(`${C.gray} min-w-[120px]`)}>Capacity/Size/User</th>
-              <th rowSpan={2} className={th(`${C.gray} min-w-[40px]`)}>Year</th>
-              <th rowSpan={2} className={th(`${C.gray} min-w-[70px]`)}>Police No.</th>
-              <th rowSpan={2} className={th(`${C.gray} min-w-[70px]`)}>Machine No.</th>
-              <th rowSpan={2} className={th(`${C.gray} min-w-[70px]`)}>Chasis No.</th>
-              <th rowSpan={2} className={th(`${C.gray} min-w-[30px]`)}>Qty</th>
-              <th rowSpan={2} className={th(`${C.gray} min-w-[40px]`)}>Valas</th>
+              <th rowSpan={2} onClick={() => handleSort('name')} className={th(`${C.id} min-w-[200px] cursor-pointer select-none hover:brightness-110`)} style={stickyLeft(212)}>Name of Fixed Asset<SortIcon col="name" sortConfig={sortConfig}/></th>
+              <th rowSpan={2} onClick={() => handleSort('maker_type_location')} className={th(`${C.gray} min-w-[150px] cursor-pointer select-none hover:brightness-110`)}>Maker/Type/Location<SortIcon col="maker_type_location" sortConfig={sortConfig}/></th>
+              <th rowSpan={2} onClick={() => handleSort('capacity_size_user')} className={th(`${C.gray} min-w-[120px] cursor-pointer select-none hover:brightness-110`)}>Capacity/Size/User<SortIcon col="capacity_size_user" sortConfig={sortConfig}/></th>
+              <th rowSpan={2} onClick={() => handleSort('year')} className={th(`${C.gray} min-w-[40px] cursor-pointer select-none hover:brightness-110`)}>Year<SortIcon col="year" sortConfig={sortConfig}/></th>
+              <th rowSpan={2} onClick={() => handleSort('police_no')} className={th(`${C.gray} min-w-[70px] cursor-pointer select-none hover:brightness-110`)}>Police No.<SortIcon col="police_no" sortConfig={sortConfig}/></th>
+              <th rowSpan={2} onClick={() => handleSort('machine_no')} className={th(`${C.gray} min-w-[70px] cursor-pointer select-none hover:brightness-110`)}>Machine No.<SortIcon col="machine_no" sortConfig={sortConfig}/></th>
+              <th rowSpan={2} onClick={() => handleSort('chasis_no')} className={th(`${C.gray} min-w-[70px] cursor-pointer select-none hover:brightness-110`)}>Chasis No.<SortIcon col="chasis_no" sortConfig={sortConfig}/></th>
+              <th rowSpan={2} onClick={() => handleSort('quantity')} className={th(`${C.gray} min-w-[30px] cursor-pointer select-none hover:brightness-110`)}>Qty<SortIcon col="quantity" sortConfig={sortConfig}/></th>
+              <th rowSpan={2} onClick={() => handleSort('valas')} className={th(`${C.gray} min-w-[40px] cursor-pointer select-none hover:brightness-110`)}>Valas<SortIcon col="valas" sortConfig={sortConfig}/></th>
               {/* Green: Purchase */}
-              <th rowSpan={2} className={th(`${C.green} min-w-[110px]`)}>Purchase Price<br/>(a)</th>
-              <th rowSpan={2} className={th(`${C.green} min-w-[110px]`)}>Monthly<br/>Depreciation<br/>(b=a÷c)</th>
+              <th rowSpan={2} onClick={() => handleSort('purchase_price')} className={th(`${C.green} min-w-[110px] cursor-pointer select-none hover:brightness-110`)}>Purchase Price<br/>(a)<SortIcon col="purchase_price" sortConfig={sortConfig}/></th>
+              <th rowSpan={2} onClick={() => handleSort('monthly_depreciation')} className={th(`${C.green} min-w-[110px] cursor-pointer select-none hover:brightness-110`)}>Monthly<br/>Depreciation<br/>(b=a÷c)<SortIcon col="monthly_depreciation" sortConfig={sortConfig}/></th>
               {/* Yellow: Period */}
               <th colSpan={5} className={th(C.yellow)}>Depreciation Period</th>
               {/* Orange: 2025 values */}
               <th colSpan={2} className={th(C.orange)}>31 Dec 2025</th>
               {/* Blue-dark: current expense */}
-              <th rowSpan={2} className={th(`${C.blue} min-w-[110px]`)}>Depreciation<br/>Expense Current<br/>31 Dec {year}</th>
+              <th rowSpan={2} onClick={() => handleSort('dep_expense_current')} className={th(`${C.blue} min-w-[110px] cursor-pointer select-none hover:brightness-110`)}>Depreciation<br/>Expense Current<br/>31 Dec {year}<SortIcon col="dep_expense_current" sortConfig={sortConfig}/></th>
               {/* Blue: Monthly 2026 */}
               <th colSpan={13} className={th(C.blue)}>DEPRECIATION {year} ( MONTHLY )</th>
               {/* Purple: end values */}
               <th colSpan={2} className={th(C.purple)}>31 Dec {year}</th>
               {/* Status */}
               <th colSpan={2} className={th(C.gray)}>Status</th>
-              <th rowSpan={2} className={th(`${C.gray} min-w-[80px]`)}>Condition</th>
-              <th rowSpan={2} className={th(`${C.gray} min-w-[80px]`)}>Remark</th>
-              <th rowSpan={2} className={th(`${C.gray} min-w-[50px]`)}>Photo<br/>Status</th>
+              <th rowSpan={2} onClick={() => handleSort('condition')} className={th(`${C.gray} min-w-[80px] cursor-pointer select-none hover:brightness-110`)}>Condition<SortIcon col="condition" sortConfig={sortConfig}/></th>
+              <th rowSpan={2} onClick={() => handleSort('remark')} className={th(`${C.gray} min-w-[80px] cursor-pointer select-none hover:brightness-110`)}>Remark<SortIcon col="remark" sortConfig={sortConfig}/></th>
+              <th rowSpan={2} onClick={() => handleSort('photo_status')} className={th(`${C.gray} min-w-[50px] cursor-pointer select-none hover:brightness-110`)}>Photo<br/>Status<SortIcon col="photo_status" sortConfig={sortConfig}/></th>
               <th rowSpan={2} className={th(`${C.gray} min-w-[60px]`)}>Actions</th>
             </tr>
 
             {/* === ROW 2: Sub-headers === */}
             <tr>
               {/* Yellow: Period sub */}
-              <th className={th(`${C.yellow} min-w-[50px]`)}>Total<br/>(c)</th>
-              <th className={th(`${C.yellow} min-w-[50px]`)}>Acc.<br/>{year-1}<br/>(d)</th>
-              <th className={th(`${C.yellow} min-w-[55px]`)}>Yearly<br/>{year}<br/>(e)</th>
-              <th className={th(`${C.yellow} min-w-[55px]`)}>Until<br/>{year}<br/>(f=d+e)</th>
-              <th className={th(`${C.yellow} min-w-[60px]`)}>Remain<br/>&gt;{year+1}<br/>(g=c-f)</th>
+              <th onClick={() => handleSort('depreciation_period_total')} className={th(`${C.yellow} min-w-[50px] cursor-pointer select-none hover:brightness-110`)}>Total<br/>(c)<SortIcon col="depreciation_period_total" sortConfig={sortConfig}/></th>
+              <th onClick={() => handleSort('dep_period_acc_prev_year')} className={th(`${C.yellow} min-w-[50px] cursor-pointer select-none hover:brightness-110`)}>Acc.<br/>{year-1}<br/>(d)<SortIcon col="dep_period_acc_prev_year" sortConfig={sortConfig}/></th>
+              <th onClick={() => handleSort('dep_period_yearly')} className={th(`${C.yellow} min-w-[55px] cursor-pointer select-none hover:brightness-110`)}>Yearly<br/>{year}<br/>(e)<SortIcon col="dep_period_yearly" sortConfig={sortConfig}/></th>
+              <th onClick={() => handleSort('dep_period_until_year')} className={th(`${C.yellow} min-w-[55px] cursor-pointer select-none hover:brightness-110`)}>Until<br/>{year}<br/>(f=d+e)<SortIcon col="dep_period_until_year" sortConfig={sortConfig}/></th>
+              <th onClick={() => handleSort('dep_period_remain')} className={th(`${C.yellow} min-w-[60px] cursor-pointer select-none hover:brightness-110`)}>Remain<br/>&gt;{year+1}<br/>(g=c-f)<SortIcon col="dep_period_remain" sortConfig={sortConfig}/></th>
               {/* Orange: 2025 sub */}
-              <th className={th(`${C.orange} min-w-[110px]`)}>Accumulated<br/>Depreciation (l)</th>
-              <th className={th(`${C.orange} min-w-[110px]`)}>Net Book<br/>Value (m=a-l)</th>
-              {/* Blue: months */}
+              <th onClick={() => handleSort('acc_depreciation_prev')} className={th(`${C.orange} min-w-[110px] cursor-pointer select-none hover:brightness-110`)}>Accumulated<br/>Depreciation (l)<SortIcon col="acc_depreciation_prev" sortConfig={sortConfig}/></th>
+              <th onClick={() => handleSort('net_book_value_prev')} className={th(`${C.orange} min-w-[110px] cursor-pointer select-none hover:brightness-110`)}>Net Book<br/>Value (m=a-l)<SortIcon col="net_book_value_prev" sortConfig={sortConfig}/></th>
+              {/* Blue: months — not sortable */}
               {MONTHS.map(m => <th key={m} className={th(`${C.blue} min-w-[90px]`)}>{m}<br/>(k)</th>)}
               <th className={th(`${C.blue} min-w-[110px]`)}>Total/<br/>Year</th>
               {/* Purple: end sub */}
-              <th className={th(`${C.purple} min-w-[110px]`)}>Accumulated<br/>Depreciation</th>
-              <th className={th(`${C.purple} min-w-[110px]`)}>Net Book<br/>Value</th>
+              <th onClick={() => handleSort('acc_depreciation_curr')} className={th(`${C.purple} min-w-[110px] cursor-pointer select-none hover:brightness-110`)}>Accumulated<br/>Depreciation<SortIcon col="acc_depreciation_curr" sortConfig={sortConfig}/></th>
+              <th onClick={() => handleSort('net_book_value_curr')} className={th(`${C.purple} min-w-[110px] cursor-pointer select-none hover:brightness-110`)}>Net Book<br/>Value<SortIcon col="net_book_value_curr" sortConfig={sortConfig}/></th>
               {/* Status sub */}
-              <th className={th(`${C.gray} min-w-[60px]`)}>Additional</th>
-              <th className={th(`${C.gray} min-w-[60px]`)}>Disposals</th>
+              <th onClick={() => handleSort('status_additional')} className={th(`${C.gray} min-w-[60px] cursor-pointer select-none hover:brightness-110`)}>Additional<SortIcon col="status_additional" sortConfig={sortConfig}/></th>
+              <th onClick={() => handleSort('status_disposals')} className={th(`${C.gray} min-w-[60px] cursor-pointer select-none hover:brightness-110`)}>Disposals<SortIcon col="status_disposals" sortConfig={sortConfig}/></th>
             </tr>
 
             {/* === ROW 3: Formula labels === */}
@@ -243,7 +290,7 @@ export default function AssetList() {
             {isLoading && (
               <tr><td colSpan={50} className="text-center py-8 text-gray-400">Loading...</td></tr>
             )}
-            {data?.items.map((asset, idx) => {
+            {sortedItems.map((asset, idx) => {
               const key = asset.fixed_asset_number_ax || String(asset.id)
               const isEven = idx % 2 === 0
               const rowBg = isEven ? '' : 'bg-gray-50'

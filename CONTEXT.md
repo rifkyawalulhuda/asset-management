@@ -122,7 +122,7 @@ docker ps --filter "name=asset-depre"
 
 ### Backend
 ```bash
-cd E:\Asset-depre\backend
+cd E:\Github\asset-management
 venv\Scripts\activate          # or: start.bat
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
@@ -131,7 +131,7 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 ### Frontend
 ```bash
-cd E:\Asset-depre\frontend
+cd E:\Github\asset-management
 npm run dev                    # http://localhost:5173
 ```
 
