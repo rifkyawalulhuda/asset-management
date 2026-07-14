@@ -342,11 +342,12 @@ def import_fa_sheet(ws, year_ref: int, db: Session) -> int:
 
         name = to_str(get('name')) or asset_no
 
-        # Category: from column or derived
+        # Category: from column only. If file has no Category column, leave None.
+        # Never derive from site_location — user inputs category manually.
         if has_category:
             category = to_str(get('category'))
         else:
-            category = derive_category(to_str(get('site_location')), to_str(get('job')))
+            category = None  # preserve existing DB value on upsert
 
         data = dict(
             no=to_int(get('no')),
@@ -396,6 +397,9 @@ def import_fa_sheet(ws, year_ref: int, db: Session) -> int:
 
         if existing:
             for k, v in data.items():
+                # Preserve existing category if new file has no Category column
+                if k == 'category' and not has_category and existing.category:
+                    continue
                 setattr(existing, k, v)
             asset = existing
         else:
