@@ -63,6 +63,7 @@ export default function AssetList() {
   const [filters, setFilters] = useState<AssetFilters>({ year_ref: 2026, page: 1, size: 100 })
   const [search, setSearch] = useState('')
   const [sortConfig, setSortConfig] = useState<SortConfig>(null)
+  const [depFilter, setDepFilter] = useState<'all' | 'active' | 'completed'>('all')
 
   const { data, isLoading } = useQuery({
     queryKey: ['assets', filters],
@@ -95,8 +96,14 @@ export default function AssetList() {
 
   const sortedItems = useMemo(() => {
     const items = data?.items ?? []
-    if (!sortConfig) return items
-    return [...items].sort((a, b) => {
+    // apply dep filter first
+    const filtered = items.filter(asset => {
+      if (depFilter === 'active') return (asset.dep_period_remain ?? 0) > 0
+      if (depFilter === 'completed') return (asset.dep_period_remain ?? 0) <= 0
+      return true
+    })
+    if (!sortConfig) return filtered
+    return [...filtered].sort((a, b) => {
       const aVal = (a as unknown as Record<string, unknown>)[sortConfig.key]
       const bVal = (b as unknown as Record<string, unknown>)[sortConfig.key]
       // nulls always last
@@ -114,7 +121,7 @@ export default function AssetList() {
       if (aStr > bStr) return sortConfig.dir === 'asc' ? 1 : -1
       return 0
     })
-  }, [data?.items, sortConfig])
+  }, [data?.items, sortConfig, depFilter])
 
   const year = filters.year_ref || 2026
 
@@ -124,7 +131,12 @@ export default function AssetList() {
       <div className="flex items-center justify-between mb-2">
         <div>
           <h1 className="text-lg font-bold">LIST OF FIXED ASSETS AND DEPRECIATION SCHEDULE</h1>
-          <p className="text-gray-500 text-xs">PT. SANKYU INDONESIA INTERNATIONAL — {data?.total ?? 0} assets</p>
+          <p className="text-gray-500 text-xs">
+            PT. SANKYU INDONESIA INTERNATIONAL —{' '}
+            {depFilter !== 'all'
+              ? `${sortedItems.length} / ${data?.total ?? 0} assets`
+              : `${data?.total ?? 0} assets`}
+          </p>
         </div>
         <Link to="/assets/new" className="bg-blue-700 text-white px-3 py-1.5 rounded hover:bg-blue-800 text-xs font-medium">
           + Add Asset
@@ -166,6 +178,16 @@ export default function AssetList() {
           <option value="50">50 rows</option>
           <option value="100">100 rows</option>
           <option value="200">200 rows</option>
+          <option value="350">350 rows</option>
+        </select>
+        <select
+          value={depFilter}
+          onChange={e => setDepFilter(e.target.value as 'all' | 'active' | 'completed')}
+          className="border rounded px-2 py-1 text-xs font-medium"
+        >
+          <option value="all">All Depreciation</option>
+          <option value="active">Active (Remain &gt; 0)</option>
+          <option value="completed">Completed (Remain = 0)</option>
         </select>
       </div>
 

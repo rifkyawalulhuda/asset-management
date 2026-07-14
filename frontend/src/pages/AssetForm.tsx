@@ -79,8 +79,12 @@ export default function AssetForm() {
   })
 
   const onSubmit = (data: FormData) => {
-    if (isEdit) updateMut.mutate({ key: id!, data })
-    else createMut.mutate(data)
+    // Convert empty strings to null for optional fields
+    const cleaned = Object.fromEntries(
+      Object.entries(data).map(([k, v]) => [k, v === '' ? null : v])
+    )
+    if (isEdit) updateMut.mutate({ key: id!, data: cleaned })
+    else createMut.mutate(cleaned)
   }
 
   const isLoading = createMut.isPending || updateMut.isPending

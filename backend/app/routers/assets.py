@@ -52,7 +52,7 @@ def list_assets(
     job: Optional[str] = None,
     search: Optional[str] = None,
     page: int = Query(1, ge=1),
-    size: int = Query(50, ge=1, le=200),
+    size: int = Query(50, ge=1, le=350),
     db: Session = Depends(get_db),
 ):
     query = db.query(FixedAsset).options(joinedload(FixedAsset.depreciation_monthly))
