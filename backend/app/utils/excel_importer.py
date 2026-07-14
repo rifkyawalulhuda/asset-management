@@ -125,8 +125,11 @@ def import_fa_sheet(ws, year_ref: int, db: Session) -> int:
             year_ref=year_ref,
         )
 
-        # Upsert: update if exists, insert if not
-        existing = db.query(FixedAsset).filter(FixedAsset.asset_no == asset_no).first()
+        # Upsert: update if exists (match by asset_no + year_ref), insert if not
+        existing = db.query(FixedAsset).filter(
+            FixedAsset.asset_no == asset_no,
+            FixedAsset.year_ref == year_ref,
+        ).first()
         if existing:
             for k, v in data.items():
                 setattr(existing, k, v)

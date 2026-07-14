@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Date, Numeric, Boolean, Text, DateTime
+from sqlalchemy import Column, Integer, String, Date, Numeric, Boolean, Text, DateTime, UniqueConstraint
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.database import Base
@@ -13,7 +13,7 @@ class FixedAsset(Base):
     job = Column(String(50))
     account_no = Column(Integer)
     category = Column(String(50))
-    asset_no = Column(String(50), unique=True, nullable=False, index=True)
+    asset_no = Column(String(50), nullable=False, index=True)
     fixed_asset_number_ax = Column(String(50))
     purchase_date = Column(Date)
     group_name = Column(String(100))
@@ -47,6 +47,10 @@ class FixedAsset(Base):
     year_ref = Column(Integer, default=2026, index=True)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint('asset_no', 'year_ref', name='uq_asset_no_year_ref'),
+    )
 
     depreciation_monthly = relationship(
         "DepreciationMonthly", back_populates="asset", cascade="all, delete-orphan"

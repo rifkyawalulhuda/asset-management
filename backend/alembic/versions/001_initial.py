@@ -58,7 +58,7 @@ def upgrade() -> None:
         sa.Column('created_at', sa.DateTime(), server_default=sa.text('now()'), nullable=True),
         sa.Column('updated_at', sa.DateTime(), server_default=sa.text('now()'), nullable=True),
         sa.PrimaryKeyConstraint('id'),
-        sa.UniqueConstraint('asset_no'),
+        sa.UniqueConstraint('asset_no', 'year_ref', name='uq_asset_no_year_ref'),
     )
     op.create_index('ix_fixed_assets_id', 'fixed_assets', ['id'])
     op.create_index('ix_fixed_assets_asset_no', 'fixed_assets', ['asset_no'])
