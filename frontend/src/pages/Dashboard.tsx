@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
   fetchSummaryMonthly,
@@ -33,6 +33,8 @@ function idrShort(v: number) {
 export default function Dashboard() {
   const [year, setYear] = useState(2026)
   const [site, setSite] = useState<string | undefined>(undefined)
+  const [categoryView, setCategoryView] = useState<'summary' | 'monthly'>('summary')
+  const [groupView, setGroupView] = useState<'summary' | 'monthly'>('summary')
 
   const { data: siteLocations } = useQuery({
     queryKey: ['site-locations', year],
@@ -64,6 +66,20 @@ export default function Dashboard() {
     retry: 1,
   })
 
+  const { data: categoryMonthly, isLoading: loadingCategoryMonthly } = useQuery({
+    queryKey: ['summary-monthly-category', year, site],
+    queryFn: () => fetchSummaryMonthly(year, site, 'category'),
+    enabled: categoryView === 'monthly',
+    retry: 1,
+  })
+
+  const { data: groupMonthly, isLoading: loadingGroupMonthly } = useQuery({
+    queryKey: ['summary-monthly-group', year, site],
+    queryFn: () => fetchSummaryMonthly(year, site, 'group_name'),
+    enabled: groupView === 'monthly',
+    retry: 1,
+  })
+
   const jobs = monthly ? Object.keys(monthly).sort() : []
 
   // Monthly totals per month (sum of all jobs)
@@ -84,6 +100,36 @@ export default function Dashboard() {
     months: MONTH_KEYS.map((_, mi) => monthlyTableRows.reduce((s, r) => s + r.months[mi], 0)),
     total: monthlyTableRows.reduce((s, r) => s + r.total, 0),
   }
+
+  // Category monthly view rows
+  const categoryMonthlyRows = useMemo(() => {
+    if (!categoryMonthly) return []
+    return Object.keys(categoryMonthly).sort().map(cat => {
+      const row = categoryMonthly[cat] as Record<string, number>
+      const months = MONTH_KEYS.map(k => row[k] || 0)
+      const total = months.reduce((s, v) => s + v, 0)
+      return { cat, months, total }
+    })
+  }, [categoryMonthly])
+  const categoryMonthlyGrand = useMemo(() => ({
+    months: MONTH_KEYS.map((_, mi) => categoryMonthlyRows.reduce((s, r) => s + r.months[mi], 0)),
+    total: categoryMonthlyRows.reduce((s, r) => s + r.total, 0),
+  }), [categoryMonthlyRows])
+
+  // Group monthly view rows
+  const groupMonthlyRows = useMemo(() => {
+    if (!groupMonthly) return []
+    return Object.keys(groupMonthly).sort().map(grp => {
+      const row = groupMonthly[grp] as Record<string, number>
+      const months = MONTH_KEYS.map(k => row[k] || 0)
+      const total = months.reduce((s, v) => s + v, 0)
+      return { grp, months, total }
+    })
+  }, [groupMonthly])
+  const groupMonthlyGrand = useMemo(() => ({
+    months: MONTH_KEYS.map((_, mi) => groupMonthlyRows.reduce((s, r) => s + r.months[mi], 0)),
+    total: groupMonthlyRows.reduce((s, r) => s + r.total, 0),
+  }), [groupMonthlyRows])
 
   return (
     <div className="space-y-5">
@@ -206,119 +252,240 @@ export default function Dashboard() {
       {/* By Group Table */}
       {byGroup && Object.keys(byGroup).length > 0 && (
         <div className="bg-white rounded-lg border p-4">
-          <h2 className="font-semibold text-base mb-3">
-            Summary by Asset Group — {year}
-            {site && <span className="ml-2 text-sm font-normal text-orange-500">(Site: {site})</span>}
-          </h2>
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="bg-[#374151] text-white text-xs">
-                <th className="px-3 py-2 text-left">Group</th>
-                <th className="px-3 py-2 text-right">Assets</th>
-                <th className="px-3 py-2 text-right">Purchase Price</th>
-                <th className="px-3 py-2 text-right">Acc. Depreciation</th>
-                <th className="px-3 py-2 text-right">Net Book Value</th>
-                <th className="px-3 py-2 text-right bg-[#1e3a8a]">Yearly Depreciation</th>
-              </tr>
-            </thead>
-            <tbody>
-              {Object.entries(byGroup).map(([group, d], idx) => (
-                <tr key={group} className={idx % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
-                  <td className="px-3 py-2 font-medium">{group}</td>
-                  <td className="px-3 py-2 text-right">{d.count}</td>
-                  <td className="px-3 py-2 text-right">{idr(d.purchase_price)}</td>
-                  <td className="px-3 py-2 text-right">{idr(d.acc_depreciation)}</td>
-                  <td className="px-3 py-2 text-right">{idr(d.net_book_value)}</td>
-                  <td className="px-3 py-2 text-right font-bold text-blue-700 bg-blue-50">{idr(d.yearly_depreciation)}</td>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="font-semibold text-base">
+              Summary by Asset Group — {year}
+              {site && <span className="ml-2 text-sm font-normal text-orange-500">(Site: {site})</span>}
+            </h2>
+            {/* Toggle buttons */}
+            <div className="flex rounded-md border border-gray-200 overflow-hidden text-xs font-medium">
+              <button
+                onClick={() => setGroupView('summary')}
+                className={`px-3 py-1.5 transition-colors ${groupView === 'summary' ? 'bg-blue-700 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+              >
+                Summary
+              </button>
+              <button
+                onClick={() => setGroupView('monthly')}
+                className={`px-3 py-1.5 border-l border-gray-200 transition-colors ${groupView === 'monthly' ? 'bg-blue-700 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+              >
+                Monthly
+              </button>
+            </div>
+          </div>
+
+          {/* Summary View */}
+          {groupView === 'summary' && (
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-[#374151] text-white text-xs">
+                  <th className="px-3 py-2 text-left">Group</th>
+                  <th className="px-3 py-2 text-right">Assets</th>
+                  <th className="px-3 py-2 text-right">Purchase Price</th>
+                  <th className="px-3 py-2 text-right">Acc. Depreciation</th>
+                  <th className="px-3 py-2 text-right">Net Book Value</th>
+                  <th className="px-3 py-2 text-right bg-[#1e3a8a]">Yearly Depreciation</th>
                 </tr>
-              ))}
-            </tbody>
-            <tfoot>
-              <tr className="bg-gray-100 font-bold text-sm border-t-2 border-gray-300">
-                <td className="px-3 py-2">TOTAL</td>
-                <td className="px-3 py-2 text-right">{Object.values(byGroup).reduce((s, d) => s + d.count, 0)}</td>
-                <td className="px-3 py-2 text-right">{idr(Object.values(byGroup).reduce((s, d) => s + d.purchase_price, 0))}</td>
-                <td className="px-3 py-2 text-right">{idr(Object.values(byGroup).reduce((s, d) => s + d.acc_depreciation, 0))}</td>
-                <td className="px-3 py-2 text-right">{idr(Object.values(byGroup).reduce((s, d) => s + d.net_book_value, 0))}</td>
-                <td className="px-3 py-2 text-right bg-blue-100">{idr(Object.values(byGroup).reduce((s, d) => s + d.yearly_depreciation, 0))}</td>
-              </tr>
-            </tfoot>
-          </table>
+              </thead>
+              <tbody>
+                {Object.entries(byGroup).map(([group, d], idx) => (
+                  <tr key={group} className={idx % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
+                    <td className="px-3 py-2 font-medium">{group}</td>
+                    <td className="px-3 py-2 text-right">{d.count}</td>
+                    <td className="px-3 py-2 text-right">{idr(d.purchase_price)}</td>
+                    <td className="px-3 py-2 text-right">{idr(d.acc_depreciation)}</td>
+                    <td className="px-3 py-2 text-right">{idr(d.net_book_value)}</td>
+                    <td className="px-3 py-2 text-right font-bold text-blue-700 bg-blue-50">{idr(d.yearly_depreciation)}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="bg-gray-100 font-bold text-sm border-t-2 border-gray-300">
+                  <td className="px-3 py-2">TOTAL</td>
+                  <td className="px-3 py-2 text-right">{Object.values(byGroup).reduce((s, d) => s + d.count, 0)}</td>
+                  <td className="px-3 py-2 text-right">{idr(Object.values(byGroup).reduce((s, d) => s + d.purchase_price, 0))}</td>
+                  <td className="px-3 py-2 text-right">{idr(Object.values(byGroup).reduce((s, d) => s + d.acc_depreciation, 0))}</td>
+                  <td className="px-3 py-2 text-right">{idr(Object.values(byGroup).reduce((s, d) => s + d.net_book_value, 0))}</td>
+                  <td className="px-3 py-2 text-right bg-blue-100">{idr(Object.values(byGroup).reduce((s, d) => s + d.yearly_depreciation, 0))}</td>
+                </tr>
+              </tfoot>
+            </table>
+          )}
+
+          {/* Monthly View */}
+          {groupView === 'monthly' && (
+            <div className="overflow-x-auto">
+              {loadingGroupMonthly ? (
+                <div className="text-gray-400 text-sm py-4">Loading...</div>
+              ) : (
+                <table className="w-full text-xs min-w-[900px]">
+                  <thead>
+                    <tr className="bg-[#374151] text-white">
+                      <th className="px-3 py-2 text-left sticky left-0 bg-[#374151] min-w-[160px]">Group</th>
+                      {MONTHS.map(m => <th key={m} className="px-2 py-2 text-right min-w-[90px]">{m}</th>)}
+                      <th className="px-3 py-2 text-right min-w-[110px] bg-[#1e3a8a]">Total/Year</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {groupMonthlyRows.map((r, idx) => (
+                      <tr key={r.grp} className={idx % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
+                        <td className="px-3 py-2 font-medium sticky left-0 bg-inherit">{r.grp}</td>
+                        {r.months.map((v, mi) => (
+                          <td key={mi} className="px-2 py-2 text-right tabular-nums">
+                            {v > 0 ? idr(v) : <span className="text-gray-300">—</span>}
+                          </td>
+                        ))}
+                        <td className="px-3 py-2 text-right font-bold text-blue-700 bg-blue-50 tabular-nums">{idr(r.total)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr className="bg-gray-100 font-bold text-xs border-t-2 border-gray-300">
+                      <td className="px-3 py-2 sticky left-0 bg-gray-100">GRAND TOTAL</td>
+                      {groupMonthlyGrand.months.map((v, mi) => (
+                        <td key={mi} className="px-2 py-2 text-right tabular-nums">{idr(v)}</td>
+                      ))}
+                      <td className="px-3 py-2 text-right bg-blue-100 tabular-nums">{idr(groupMonthlyGrand.total)}</td>
+                    </tr>
+                  </tfoot>
+                </table>
+              )}
+            </div>
+          )}
         </div>
       )}
 
       {/* Summary by Category */}
       {byCategory && Object.keys(byCategory).length > 0 && (
         <div className="bg-white rounded-lg border p-4">
-          <h2 className="font-semibold text-base mb-3">
-            Summary by Category — {year}
-            {site && <span className="ml-2 text-sm font-normal text-orange-500">(Site: {site})</span>}
-          </h2>
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="bg-[#0f4c81] text-white text-xs">
-                <th className="px-3 py-2 text-left">Category</th>
-                <th className="px-3 py-2 text-right">Assets</th>
-                <th className="px-3 py-2 text-right">Purchase Price</th>
-                <th className="px-3 py-2 text-right">Acc. Depreciation</th>
-                <th className="px-3 py-2 text-right">Net Book Value</th>
-                <th className="px-3 py-2 text-right bg-[#1e3a8a]">Yearly Depreciation</th>
-                <th className="px-3 py-2 text-right bg-[#1e3a8a]">% of Total</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(() => {
-                const totalYearly = Object.values(byCategory as Record<string, {yearly_depreciation: number; purchase_price: number; acc_depreciation: number; net_book_value: number; count: number}>)
-                  .reduce((s, d) => s + d.yearly_depreciation, 0)
-                return Object.entries(byCategory as Record<string, {yearly_depreciation: number; purchase_price: number; acc_depreciation: number; net_book_value: number; count: number}>)
-                  .map(([cat, d], idx) => {
-                    const pct = totalYearly > 0 ? (d.yearly_depreciation / totalYearly * 100) : 0
-                    return (
-                      <tr key={cat} className={idx % 2 === 0 ? 'bg-white' : 'bg-blue-50'}>
-                        <td className="px-3 py-2 font-medium">
-                          <span className="inline-flex items-center gap-1.5">
-                            <span className="w-2 h-2 rounded-full bg-blue-500 flex-shrink-0" />
-                            {cat}
-                          </span>
-                        </td>
-                        <td className="px-3 py-2 text-right">{d.count}</td>
-                        <td className="px-3 py-2 text-right">{idr(d.purchase_price)}</td>
-                        <td className="px-3 py-2 text-right">{idr(d.acc_depreciation)}</td>
-                        <td className="px-3 py-2 text-right">{idr(d.net_book_value)}</td>
-                        <td className="px-3 py-2 text-right font-bold text-blue-700 bg-blue-50">{idr(d.yearly_depreciation)}</td>
-                        <td className="px-3 py-2 text-right bg-blue-50">
-                          <div className="flex items-center gap-2 justify-end">
-                            <div className="w-16 bg-gray-100 rounded-full h-1.5 overflow-hidden">
-                              <div
-                                className="h-1.5 rounded-full bg-blue-500"
-                                style={{ width: `${pct.toFixed(1)}%` }}
-                              />
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="font-semibold text-base">
+              Summary by Category — {year}
+              {site && <span className="ml-2 text-sm font-normal text-orange-500">(Site: {site})</span>}
+            </h2>
+            {/* Toggle buttons */}
+            <div className="flex rounded-md border border-gray-200 overflow-hidden text-xs font-medium">
+              <button
+                onClick={() => setCategoryView('summary')}
+                className={`px-3 py-1.5 transition-colors ${categoryView === 'summary' ? 'bg-blue-700 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+              >
+                Summary
+              </button>
+              <button
+                onClick={() => setCategoryView('monthly')}
+                className={`px-3 py-1.5 border-l border-gray-200 transition-colors ${categoryView === 'monthly' ? 'bg-blue-700 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+              >
+                Monthly
+              </button>
+            </div>
+          </div>
+
+          {/* Summary View */}
+          {categoryView === 'summary' && (
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-[#0f4c81] text-white text-xs">
+                  <th className="px-3 py-2 text-left">Category</th>
+                  <th className="px-3 py-2 text-right">Assets</th>
+                  <th className="px-3 py-2 text-right">Purchase Price</th>
+                  <th className="px-3 py-2 text-right">Acc. Depreciation</th>
+                  <th className="px-3 py-2 text-right">Net Book Value</th>
+                  <th className="px-3 py-2 text-right bg-[#1e3a8a]">Yearly Depreciation</th>
+                  <th className="px-3 py-2 text-right bg-[#1e3a8a]">% of Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(() => {
+                  const totalYearly = Object.values(byCategory as Record<string, {yearly_depreciation: number; purchase_price: number; acc_depreciation: number; net_book_value: number; count: number}>)
+                    .reduce((s, d) => s + d.yearly_depreciation, 0)
+                  return Object.entries(byCategory as Record<string, {yearly_depreciation: number; purchase_price: number; acc_depreciation: number; net_book_value: number; count: number}>)
+                    .map(([cat, d], idx) => {
+                      const pct = totalYearly > 0 ? (d.yearly_depreciation / totalYearly * 100) : 0
+                      return (
+                        <tr key={cat} className={idx % 2 === 0 ? 'bg-white' : 'bg-blue-50'}>
+                          <td className="px-3 py-2 font-medium">
+                            <span className="inline-flex items-center gap-1.5">
+                              <span className="w-2 h-2 rounded-full bg-blue-500 flex-shrink-0" />
+                              {cat}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2 text-right">{d.count}</td>
+                          <td className="px-3 py-2 text-right">{idr(d.purchase_price)}</td>
+                          <td className="px-3 py-2 text-right">{idr(d.acc_depreciation)}</td>
+                          <td className="px-3 py-2 text-right">{idr(d.net_book_value)}</td>
+                          <td className="px-3 py-2 text-right font-bold text-blue-700 bg-blue-50">{idr(d.yearly_depreciation)}</td>
+                          <td className="px-3 py-2 text-right bg-blue-50">
+                            <div className="flex items-center gap-2 justify-end">
+                              <div className="w-16 bg-gray-100 rounded-full h-1.5 overflow-hidden">
+                                <div className="h-1.5 rounded-full bg-blue-500" style={{ width: `${pct.toFixed(1)}%` }} />
+                              </div>
+                              <span className="text-xs text-gray-500 w-10 text-right">{pct.toFixed(1)}%</span>
                             </div>
-                            <span className="text-xs text-gray-500 w-10 text-right">{pct.toFixed(1)}%</span>
-                          </div>
-                        </td>
+                          </td>
+                        </tr>
+                      )
+                    })
+                })()}
+              </tbody>
+              <tfoot>
+                {(() => {
+                  const cats = byCategory as Record<string, {yearly_depreciation: number; purchase_price: number; acc_depreciation: number; net_book_value: number; count: number}>
+                  return (
+                    <tr className="bg-gray-100 font-bold text-sm border-t-2 border-gray-300">
+                      <td className="px-3 py-2">TOTAL</td>
+                      <td className="px-3 py-2 text-right">{Object.values(cats).reduce((s, d) => s + d.count, 0)}</td>
+                      <td className="px-3 py-2 text-right">{idr(Object.values(cats).reduce((s, d) => s + d.purchase_price, 0))}</td>
+                      <td className="px-3 py-2 text-right">{idr(Object.values(cats).reduce((s, d) => s + d.acc_depreciation, 0))}</td>
+                      <td className="px-3 py-2 text-right">{idr(Object.values(cats).reduce((s, d) => s + d.net_book_value, 0))}</td>
+                      <td className="px-3 py-2 text-right bg-blue-100">{idr(Object.values(cats).reduce((s, d) => s + d.yearly_depreciation, 0))}</td>
+                      <td className="px-3 py-2 text-right bg-blue-100">100%</td>
+                    </tr>
+                  )
+                })()}
+              </tfoot>
+            </table>
+          )}
+
+          {/* Monthly View */}
+          {categoryView === 'monthly' && (
+            <div className="overflow-x-auto">
+              {loadingCategoryMonthly ? (
+                <div className="text-gray-400 text-sm py-4">Loading...</div>
+              ) : (
+                <table className="w-full text-xs min-w-[900px]">
+                  <thead>
+                    <tr className="bg-[#0f4c81] text-white">
+                      <th className="px-3 py-2 text-left sticky left-0 bg-[#0f4c81] min-w-[100px]">Category</th>
+                      {MONTHS.map(m => <th key={m} className="px-2 py-2 text-right min-w-[90px]">{m}</th>)}
+                      <th className="px-3 py-2 text-right min-w-[110px] bg-[#1e3a8a]">Total/Year</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {categoryMonthlyRows.map((r, idx) => (
+                      <tr key={r.cat} className={idx % 2 === 0 ? 'bg-white' : 'bg-blue-50'}>
+                        <td className="px-3 py-2 font-medium sticky left-0 bg-inherit">{r.cat}</td>
+                        {r.months.map((v, mi) => (
+                          <td key={mi} className="px-2 py-2 text-right tabular-nums">
+                            {v > 0 ? idr(v) : <span className="text-gray-300">—</span>}
+                          </td>
+                        ))}
+                        <td className="px-3 py-2 text-right font-bold text-blue-700 bg-blue-50 tabular-nums">{idr(r.total)}</td>
                       </tr>
-                    )
-                  })
-              })()}
-            </tbody>
-            <tfoot>
-              {(() => {
-                const cats = byCategory as Record<string, {yearly_depreciation: number; purchase_price: number; acc_depreciation: number; net_book_value: number; count: number}>
-                return (
-                  <tr className="bg-gray-100 font-bold text-sm border-t-2 border-gray-300">
-                    <td className="px-3 py-2">TOTAL</td>
-                    <td className="px-3 py-2 text-right">{Object.values(cats).reduce((s, d) => s + d.count, 0)}</td>
-                    <td className="px-3 py-2 text-right">{idr(Object.values(cats).reduce((s, d) => s + d.purchase_price, 0))}</td>
-                    <td className="px-3 py-2 text-right">{idr(Object.values(cats).reduce((s, d) => s + d.acc_depreciation, 0))}</td>
-                    <td className="px-3 py-2 text-right">{idr(Object.values(cats).reduce((s, d) => s + d.net_book_value, 0))}</td>
-                    <td className="px-3 py-2 text-right bg-blue-100">{idr(Object.values(cats).reduce((s, d) => s + d.yearly_depreciation, 0))}</td>
-                    <td className="px-3 py-2 text-right bg-blue-100">100%</td>
-                  </tr>
-                )
-              })()}
-            </tfoot>
-          </table>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr className="bg-gray-100 font-bold text-xs border-t-2 border-gray-300">
+                      <td className="px-3 py-2 sticky left-0 bg-gray-100">GRAND TOTAL</td>
+                      {categoryMonthlyGrand.months.map((v, mi) => (
+                        <td key={mi} className="px-2 py-2 text-right tabular-nums">{idr(v)}</td>
+                      ))}
+                      <td className="px-3 py-2 text-right bg-blue-100 tabular-nums">{idr(categoryMonthlyGrand.total)}</td>
+                    </tr>
+                  </tfoot>
+                </table>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>

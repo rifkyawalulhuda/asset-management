@@ -47,9 +47,10 @@ export const deleteAcquisition = async (id: number): Promise<void> => {
 }
 
 // Summary
-export const fetchSummaryMonthly = async (year_ref: number, site_location?: string): Promise<SummaryMonthly> => {
+export const fetchSummaryMonthly = async (year_ref: number, site_location?: string, group_by?: 'job' | 'category' | 'group_name'): Promise<SummaryMonthly> => {
   const params: Record<string, unknown> = { year_ref }
   if (site_location) params.site_location = site_location
+  if (group_by) params.group_by = group_by
   const { data } = await api.get('/summary/monthly', { params })
   return data
 }

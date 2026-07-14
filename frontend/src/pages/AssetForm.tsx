@@ -1,10 +1,73 @@
-import { useEffect } from 'react'
+import { useEffect, useMemo } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { fetchAsset, createAsset, updateAsset } from '../services/assets'
+
+// ── helpers ──────────────────────────────────────────────────────────────────
+function idr(v: number | null | undefined) {
+  if (v == null || v === 0) return '—'
+  return 'Rp ' + new Intl.NumberFormat('id-ID').format(Math.round(v))
+}
+function num(v: number | null | undefined) {
+  if (v == null) return '—'
+  return String(Math.round(v))
+}
+
+/** months elapsed from purchase_date up to end of target_month/year (inclusive) */
+function monthsElapsed(purchaseDate: Date, targetYear: number, targetMonth: number): number {
+  const sy = purchaseDate.getFullYear()
+  const sm = purchaseDate.getMonth() + 1 // 1-indexed
+  const elapsed = (targetYear - sy) * 12 + (targetMonth - sm) + 1
+  return Math.max(0, elapsed)
+}
+
+interface DepCalc {
+  monthly: number
+  accPrev: number
+  yearly: number
+  untilYear: number
+  remain: number
+  accDepPrev: number
+  nbvPrev: number
+  depExpCurrent: number
+  accDepCurr: number
+  nbvCurr: number
+}
+
+function calcDepreciation(
+  purchasePrice: number,
+  periodTotal: number,
+  purchaseDateStr: string | null | undefined,
+  yearRef: number
+): DepCalc | null {
+  if (!purchasePrice || !periodTotal || periodTotal <= 0) return null
+  const monthly = purchasePrice / periodTotal
+
+  let accPrev = 0, yearly = 0, untilYear = 0, remain = 0
+  if (purchaseDateStr) {
+    const pd = new Date(purchaseDateStr)
+    if (!isNaN(pd.getTime())) {
+      const prevYear = yearRef - 1
+      const ap = Math.min(monthsElapsed(pd, prevYear, 12), periodTotal)
+      const ae = Math.min(monthsElapsed(pd, yearRef, 12), periodTotal)
+      accPrev   = ap
+      yearly    = Math.max(0, ae - ap)
+      untilYear = ae
+      remain    = Math.max(0, periodTotal - ae)
+    }
+  }
+
+  const accDepPrev    = monthly * accPrev
+  const accDepCurr    = monthly * untilYear
+  const nbvPrev       = Math.max(0, purchasePrice - accDepPrev)
+  const depExpCurrent = monthly * yearly
+  const nbvCurr       = Math.max(0, purchasePrice - accDepCurr)
+
+  return { monthly, accPrev, yearly, untilYear, remain, accDepPrev, nbvPrev, depExpCurrent, accDepCurr, nbvCurr }
+}
 
 const schema = z.object({
   asset_no: z.string().min(1, 'Asset No is required'),
@@ -50,10 +113,24 @@ export default function AssetForm() {
     enabled: isEdit,
   })
 
-  const { register, handleSubmit, reset, formState: { errors } } = useForm<FormData>({
+  const { register, handleSubmit, reset, watch, formState: { errors } } = useForm<FormData>({
     resolver: zodResolver(schema),
     defaultValues: { year_ref: 2026 },
   })
+
+  // Realtime depreciation preview
+  const [watchPrice, watchPeriod, watchPurchaseDate, watchYearRef] = watch([
+    'purchase_price', 'depreciation_period_total', 'purchase_date', 'year_ref'
+  ])
+  const depPreview = useMemo(() =>
+    calcDepreciation(
+      Number(watchPrice) || 0,
+      Number(watchPeriod) || 0,
+      watchPurchaseDate as string | null,
+      Number(watchYearRef) || 2026
+    ),
+    [watchPrice, watchPeriod, watchPurchaseDate, watchYearRef]
+  )
 
   useEffect(() => {
     if (asset) {
@@ -187,6 +264,75 @@ export default function AssetForm() {
           </div>
           <p className="text-xs text-gray-400 mt-2">Monthly depreciation will be calculated automatically.</p>
         </Section>
+
+        {/* Depreciation Preview */}
+        <div className="bg-white border rounded-lg p-4">
+          <h2 className="font-semibold text-gray-700 mb-3 border-b pb-2 flex items-center gap-2">
+            Depreciation Preview
+            {depPreview
+              ? <span className="text-xs font-normal text-green-600 bg-green-50 px-2 py-0.5 rounded">Live</span>
+              : <span className="text-xs font-normal text-gray-400 bg-gray-100 px-2 py-0.5 rounded">Enter price &amp; period to calculate</span>
+            }
+          </h2>
+          <div className="grid grid-cols-2 gap-x-8 gap-y-1.5 text-sm">
+            {/* Monthly */}
+            <div className="col-span-2 flex justify-between py-1 border-b">
+              <span className="text-gray-500">Monthly Depreciation (b = a ÷ c)</span>
+              <span className="font-semibold text-green-700">{depPreview ? idr(depPreview.monthly) : '—'}</span>
+            </div>
+            {/* Period section */}
+            <div className="col-span-2 mt-2 mb-1 text-xs font-semibold text-gray-400 uppercase tracking-wide">Depreciation Period</div>
+            <div className="flex justify-between">
+              <span className="text-gray-500">Total Period (c)</span>
+              <span className="font-medium">{depPreview ? `${num(Number(watchPeriod))} months` : '—'}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-gray-500">Acc. Period s/d {(Number(watchYearRef) || 2026) - 1} (d)</span>
+              <span className="font-medium">{depPreview ? `${num(depPreview.accPrev)} months` : '—'}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-gray-500">Yearly {Number(watchYearRef) || 2026} (e)</span>
+              <span className="font-medium">{depPreview ? `${num(depPreview.yearly)} months` : '—'}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-gray-500">Until {Number(watchYearRef) || 2026} (f = d+e)</span>
+              <span className="font-medium">{depPreview ? `${num(depPreview.untilYear)} months` : '—'}</span>
+            </div>
+            <div className="flex justify-between col-span-2 sm:col-span-1">
+              <span className="text-gray-500">Remaining (g = c−f)</span>
+              <span className={`font-medium ${depPreview && depPreview.remain === 0 ? 'text-red-500' : ''}`}>
+                {depPreview ? `${num(depPreview.remain)} months` : '—'}
+              </span>
+            </div>
+            {/* Book value section */}
+            <div className="col-span-2 mt-2 mb-1 text-xs font-semibold text-gray-400 uppercase tracking-wide">Book Values</div>
+            <div className="flex justify-between">
+              <span className="text-gray-500">Acc. Depreciation 31 Dec {(Number(watchYearRef) || 2026) - 1} (l)</span>
+              <span className="font-medium">{depPreview ? idr(depPreview.accDepPrev) : '—'}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-gray-500">NBV 31 Dec {(Number(watchYearRef) || 2026) - 1} (m)</span>
+              <span className="font-medium">{depPreview ? idr(depPreview.nbvPrev) : '—'}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-gray-500">Dep. Expense {Number(watchYearRef) || 2026} (j)</span>
+              <span className="font-medium text-blue-700">{depPreview ? idr(depPreview.depExpCurrent) : '—'}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-gray-500">Acc. Depreciation 31 Dec {Number(watchYearRef) || 2026}</span>
+              <span className="font-medium">{depPreview ? idr(depPreview.accDepCurr) : '—'}</span>
+            </div>
+            <div className="col-span-2 flex justify-between pt-1 border-t mt-1">
+              <span className="text-gray-600 font-semibold">NBV 31 Dec {Number(watchYearRef) || 2026}</span>
+              <span className="font-bold text-blue-800 text-base">{depPreview ? idr(depPreview.nbvCurr) : '—'}</span>
+            </div>
+          </div>
+          {depPreview && !watchPurchaseDate && (
+            <p className="text-xs text-amber-600 mt-3 bg-amber-50 px-2 py-1 rounded">
+              Tambahkan Purchase Date untuk menghitung period fields secara akurat.
+            </p>
+          )}
+        </div>
 
         {/* Status */}
         <Section title="Status & Condition">

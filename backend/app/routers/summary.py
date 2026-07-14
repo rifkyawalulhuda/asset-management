@@ -15,13 +15,20 @@ MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", 
 def summary_monthly(
     year_ref: int = 2026,
     site_location: Optional[str] = None,
+    group_by: str = Query("job", pattern="^(job|category|group_name)$"),
     db: Session = Depends(get_db)
 ) -> Dict[str, Any]:
-    """Returns monthly depreciation totals grouped by job category."""
-    # Use JOIN instead of two queries + IN clause (more efficient for large datasets)
+    """Returns monthly depreciation totals grouped by job, category, or group_name."""
+    if group_by == "category":
+        group_col = FixedAsset.category
+    elif group_by == "group_name":
+        group_col = FixedAsset.group_name
+    else:
+        group_col = FixedAsset.job
+
     query = (
         db.query(
-            FixedAsset.job,
+            group_col.label("group_key"),
             DepreciationMonthly.month,
             func.sum(DepreciationMonthly.amount).label("total"),
         )
@@ -34,18 +41,18 @@ def summary_monthly(
     if site_location:
         query = query.filter(FixedAsset.site_location == site_location)
 
-    rows = query.group_by(FixedAsset.job, DepreciationMonthly.month).all()
+    rows = query.group_by(group_col, DepreciationMonthly.month).all()
 
     result: Dict[str, Dict] = {}
     for row in rows:
-        job = row.job or "UNKNOWN"
-        if job not in result:
-            result[job] = {m: 0 for m in MONTHS}
-            result[job]["total"] = 0
+        key = row.group_key or "UNKNOWN"
+        if key not in result:
+            result[key] = {m: 0 for m in MONTHS}
+            result[key]["total"] = 0
         month_key = MONTHS[row.month - 1]
         amount = float(row.total or 0)
-        result[job][month_key] += amount
-        result[job]["total"] += amount
+        result[key][month_key] += amount
+        result[key]["total"] += amount
 
     return result
 
@@ -56,15 +63,23 @@ def summary_by_group(
     site_location: Optional[str] = None,
     db: Session = Depends(get_db)
 ) -> Dict[str, Any]:
-    """Returns yearly depreciation subtotals per group_name."""
-    query = db.query(
-        FixedAsset.group_name,
-        func.sum(FixedAsset.dep_expense_current).label("yearly_total"),
-        func.sum(FixedAsset.purchase_price).label("purchase_total"),
-        func.sum(FixedAsset.acc_depreciation_curr).label("acc_total"),
-        func.sum(FixedAsset.net_book_value_curr).label("nbv_total"),
-        func.count(FixedAsset.id).label("count"),
-    ).filter(FixedAsset.year_ref == year_ref)
+    """Returns yearly depreciation subtotals per group_name.
+    yearly_depreciation is calculated from depreciation_monthly table for consistency."""
+    query = (
+        db.query(
+            FixedAsset.group_name,
+            func.sum(DepreciationMonthly.amount).label("yearly_total"),
+            func.sum(FixedAsset.purchase_price).label("purchase_total"),
+            func.sum(FixedAsset.acc_depreciation_curr).label("acc_total"),
+            func.sum(FixedAsset.net_book_value_curr).label("nbv_total"),
+            func.count(FixedAsset.id.distinct()).label("count"),
+        )
+        .join(DepreciationMonthly, DepreciationMonthly.asset_id == FixedAsset.id)
+        .filter(
+            FixedAsset.year_ref == year_ref,
+            DepreciationMonthly.year == year_ref,
+        )
+    )
     if site_location:
         query = query.filter(FixedAsset.site_location == site_location)
     rows = query.group_by(FixedAsset.group_name).all()
@@ -86,21 +101,29 @@ def summary_by_category(
     site_location: Optional[str] = None,
     db: Session = Depends(get_db)
 ) -> Dict[str, Any]:
-    """Returns yearly depreciation subtotals per category (WH1, WH2, TRP, etc.)."""
-    query = db.query(
-        FixedAsset.category,
-        func.sum(FixedAsset.dep_expense_current).label("yearly_total"),
-        func.sum(FixedAsset.purchase_price).label("purchase_total"),
-        func.sum(FixedAsset.acc_depreciation_curr).label("acc_total"),
-        func.sum(FixedAsset.net_book_value_curr).label("nbv_total"),
-        func.count(FixedAsset.id).label("count"),
-    ).filter(FixedAsset.year_ref == year_ref)
+    """Returns yearly depreciation subtotals per category (WH1, WH2, TRP, etc.).
+    yearly_depreciation is calculated from depreciation_monthly table for consistency."""
+    query = (
+        db.query(
+            FixedAsset.category,
+            func.sum(DepreciationMonthly.amount).label("yearly_total"),
+            func.sum(FixedAsset.purchase_price).label("purchase_total"),
+            func.sum(FixedAsset.acc_depreciation_curr).label("acc_total"),
+            func.sum(FixedAsset.net_book_value_curr).label("nbv_total"),
+            func.count(FixedAsset.id.distinct()).label("count"),
+        )
+        .join(DepreciationMonthly, DepreciationMonthly.asset_id == FixedAsset.id)
+        .filter(
+            FixedAsset.year_ref == year_ref,
+            DepreciationMonthly.year == year_ref,
+        )
+    )
     if site_location:
         query = query.filter(FixedAsset.site_location == site_location)
     rows = (
         query
         .group_by(FixedAsset.category)
-        .order_by(func.sum(FixedAsset.dep_expense_current).desc())
+        .order_by(func.sum(DepreciationMonthly.amount).desc())
         .all()
     )
     return {
@@ -121,14 +144,30 @@ def summary_totals(
     site_location: Optional[str] = None,
     db: Session = Depends(get_db)
 ) -> Dict[str, Any]:
-    """Returns overall totals for summary cards."""
-    query = db.query(
-        func.count(FixedAsset.id).label("total_assets"),
-        func.sum(FixedAsset.purchase_price).label("total_purchase"),
-        func.sum(FixedAsset.acc_depreciation_curr).label("total_acc_depr"),
-        func.sum(FixedAsset.net_book_value_curr).label("total_nbv"),
-        func.sum(FixedAsset.dep_expense_current).label("total_yearly_depr"),
-    ).filter(FixedAsset.year_ref == year_ref)
+    """Returns overall totals for summary cards.
+    total_yearly_depreciation is calculated from depreciation_monthly table for consistency."""
+    # Subquery for yearly depreciation from monthly table
+    dep_sub = (
+        db.query(
+            DepreciationMonthly.asset_id,
+            func.sum(DepreciationMonthly.amount).label("yearly_dep"),
+        )
+        .filter(DepreciationMonthly.year == year_ref)
+        .group_by(DepreciationMonthly.asset_id)
+        .subquery()
+    )
+
+    query = (
+        db.query(
+            func.count(FixedAsset.id).label("total_assets"),
+            func.sum(FixedAsset.purchase_price).label("total_purchase"),
+            func.sum(FixedAsset.acc_depreciation_curr).label("total_acc_depr"),
+            func.sum(FixedAsset.net_book_value_curr).label("total_nbv"),
+            func.sum(dep_sub.c.yearly_dep).label("total_yearly_depr"),
+        )
+        .outerjoin(dep_sub, dep_sub.c.asset_id == FixedAsset.id)
+        .filter(FixedAsset.year_ref == year_ref)
+    )
     if site_location:
         query = query.filter(FixedAsset.site_location == site_location)
     r = query.first()
