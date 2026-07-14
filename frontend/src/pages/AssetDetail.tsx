@@ -92,7 +92,7 @@ export default function AssetDetail() {
                   return <td key={i} className="px-3 py-2 text-right text-xs">{formatIDR(row?.amount ?? 0)}</td>
                 })}
                 <td className="px-3 py-2 text-right text-xs font-bold bg-blue-50">
-                  {formatIDR(monthly2026.reduce((s, d) => s + (d.amount || 0), 0))}
+                  {formatIDR(monthly2026.reduce((s, d) => s + Number(d.amount || 0), 0))}
                 </td>
               </tr>
             </tbody>

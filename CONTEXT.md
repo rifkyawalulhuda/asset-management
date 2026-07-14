@@ -17,51 +17,55 @@ Menggantikan workflow Microsoft Excel dengan CRUD penuh, kalkulasi otomatis, dan
 ## Repository Structure
 
 ```
-E:\Asset-depre\
-├── backend/                          # FastAPI Python backend
+E:\Github\asset-management\
+├── backend/
 │   ├── app/
-│   │   ├── main.py                   # FastAPI app entry, CORS, router registration
+│   │   ├── main.py                   # FastAPI app entry, CORS, router registration (5 routers)
 │   │   ├── config.py                 # Pydantic settings, reads .env
 │   │   ├── database.py               # SQLAlchemy engine, SessionLocal, Base, get_db()
 │   │   ├── models/
 │   │   │   ├── fixed_asset.py        # FixedAsset model (main table)
-│   │   │   ├── depreciation_monthly.py # DepreciationMonthly model
-│   │   │   └── acquisition_disposal.py # AcquisitionDisposal model
+│   │   │   ├── depreciation_monthly.py
+│   │   │   └── acquisition_disposal.py
 │   │   ├── schemas/
 │   │   │   ├── fixed_asset.py        # Pydantic schemas (Create/Update/Response)
 │   │   │   └── acquisition_disposal.py
 │   │   ├── routers/
-│   │   │   ├── assets.py             # GET/POST/PUT/DELETE /api/assets
-│   │   │   ├── summary.py            # GET /api/summary/* endpoints
+│   │   │   ├── assets.py             # GET/POST/PUT/DELETE /api/assets (size max: 350)
+│   │   │   ├── summary.py            # GET /api/summary/* (monthly group_by param, all use depreciation_monthly as source)
 │   │   │   ├── acquisitions.py       # GET/POST/PUT/DELETE /api/acquisitions
-│   │   │   └── import_excel.py       # POST /api/import/excel
+│   │   │   ├── import_excel.py       # POST /api/import/excel
+│   │   │   ├── forecast.py           # GET /api/forecast/* (on-the-fly calc, no DB writes)
+│   │   │   └── export.py             # GET /api/export/excel (multi-sheet .xlsx via openpyxl)
 │   │   ├── services/
-│   │   │   └── depreciation.py       # Straight-line depreciation calc service
+│   │   │   └── depreciation.py       # recalculate_asset() + recalculate_summary_fields() — full straight-line calc
 │   │   └── utils/
-│   │       ├── excel_importer.py     # Legacy importer (file lama, hardcoded cols)
+│   │       ├── excel_importer.py     # Legacy importer (hardcoded cols, do not use)
 │   │       └── excel_importer_v2.py  # Active importer (auto-detect format)
-│   ├── alembic/                      # DB migrations
-│   │   └── versions/001_initial.py   # Initial migration (all tables)
+│   ├── alembic/
+│   │   └── versions/001_initial.py
 │   ├── .env                          # DATABASE_URL=postgresql://sankyu:sankyu123@localhost:5436/sankyu_assets
-│   ├── alembic.ini                   # sqlalchemy.url = port 5436
-│   ├── requirements.txt              # Python dependencies
-│   └── start.bat                     # Quick start script
-├── frontend/                         # React + Vite frontend
+│   ├── alembic.ini
+│   ├── requirements.txt
+│   └── start.bat
+├── frontend/
 │   └── src/
-│       ├── App.tsx                   # Router, QueryClientProvider
+│       ├── App.tsx                   # Router, QueryClientProvider (6 routes incl. /forecast)
 │       ├── components/
-│       │   └── Layout.tsx            # Nav header, Outlet
+│       │   └── Layout.tsx            # Nav: Dashboard, Fixed Assets, Forecast, Export, Acquisitions, Import Excel
 │       ├── pages/
-│       │   ├── Dashboard.tsx         # Summary cards, SVG bar chart, tables
-│       │   ├── AssetList.tsx         # Excel-style table, filters, pagination
+│       │   ├── Dashboard.tsx         # Summary cards, SVG bar chart, monthly table, by-group, by-category
+│       │   │                         # by-group & by-category: toggle Summary/Monthly view
+│       │   ├── AssetList.tsx         # Excel-style table, client-side sort (all cols), dep filter, pagination
 │       │   ├── AssetDetail.tsx       # Asset info + depreciation schedule
-│       │   ├── AssetForm.tsx         # Add/Edit form (react-hook-form + zod)
-│       │   ├── SummaryReport.tsx     # Monthly + by-group report
+│       │   ├── AssetForm.tsx         # Add/Edit form + realtime depreciation preview panel
+│       │   ├── SummaryReport.tsx     # Export Center: filter → preview → download .xlsx
+│       │   ├── ForecastPage.tsx      # /forecast: year 2027-2030, monthly/by-group/by-category/asset detail
 │       │   ├── Acquisitions.tsx      # Acquisition/disposal CRUD
-│       │   └── ImportExcel.tsx       # Drag & drop Excel upload
+│       │   └── ImportExcel.tsx       # Drag & drop XLSX upload
 │       ├── services/
 │       │   ├── api.ts                # axios instance (baseURL: http://localhost:8000/api)
-│       │   └── assets.ts             # All API service functions
+│       │   └── assets.ts             # All API service functions incl. fetchForecast* functions
 │       ├── types/index.ts            # TypeScript interfaces
 │       └── utils/format.ts           # formatIDR, formatDate, formatNumber
 ├── docker-compose.yml                # PostgreSQL on port 5436
@@ -122,8 +126,8 @@ docker ps --filter "name=asset-depre"
 
 ### Backend
 ```bash
-cd E:\Github\asset-management
-venv\Scripts\activate          # or: start.bat
+cd E:\Github\asset-management\backend
+& "E:\Github\asset-management\backend\venv\Scripts\activate.ps1"
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 - API: http://localhost:8000
@@ -131,15 +135,15 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 ### Frontend
 ```bash
-cd E:\Github\asset-management
-npm run dev                    # http://localhost:5173
+cd E:\Github\asset-management\frontend
+npm run dev    # http://localhost:5173
 ```
 
 ### First-time Setup (if DB is empty)
 ```bash
-cd E:\Asset-depre\backend
-venv\Scripts\python -m app.utils.excel_importer_v2 --file "E:\Asset-depre\Est-Depreciation_Calculation_for_2026_.xlsx"
-venv\Scripts\python -m app.utils.excel_importer_v2 --file "E:\Asset-depre\Fixed Asset_202606.xlsx"
+cd E:\Github\asset-management\backend
+& venv\Scripts\python.exe -m app.utils.excel_importer_v2 --file "E:\Github\asset-management\Est-Depreciation_Calculation_for_2026_.xlsx"
+& venv\Scripts\python.exe -m app.utils.excel_importer_v2 --file "E:\Github\asset-management\Fixed Asset_202606.xlsx"
 ```
 
 ---
@@ -158,11 +162,9 @@ Key columns:
 - `purchase_price` — NUMERIC(20,4)
 - `monthly_depreciation` — b = purchase_price / depreciation_period_total
 - `depreciation_period_total` — total months
-- `acc_depreciation_prev` — accumulated depreciation end of previous year
-- `net_book_value_prev` — NBV end of previous year
-- `dep_expense_current` — yearly depreciation current year
-- `acc_depreciation_curr` — accumulated depreciation end of current year
-- `net_book_value_curr` — NBV end of current year
+- `dep_period_acc_prev_year`, `dep_period_yearly`, `dep_period_until_year`, `dep_period_remain`
+- `acc_depreciation_prev`, `net_book_value_prev`
+- `dep_expense_current`, `acc_depreciation_curr`, `net_book_value_curr`
 
 **Unique constraint:** `uq_ax_year_ref` on (`fixed_asset_number_ax`, `year_ref`)
 
@@ -181,32 +183,51 @@ Key columns:
 
 ### Assets
 ```
-GET    /api/assets                     # List with filters: year_ref, category, group_name,
-                                       # site_location, job, search, page, size
-POST   /api/assets                     # Create asset
-GET    /api/assets/{ax_number}         # Get by fixed_asset_number_ax (e.g. BLD000048)
-PUT    /api/assets/{ax_number}         # Update (fallback to integer id if no AX)
-DELETE /api/assets/{ax_number}         # Delete
-GET    /api/assets/{ax_number}/depreciation  # Monthly depreciation schedule
+GET    /api/assets                     # Filters: year_ref, category, group_name, site_location,
+                                       # job, search, page, size (max 350)
+POST   /api/assets                     # Create asset (triggers recalculate_asset)
+GET    /api/assets/{ax_number}         # Get by fixed_asset_number_ax
+PUT    /api/assets/{ax_number}         # Update (triggers recalculate_asset)
+DELETE /api/assets/{ax_number}
+GET    /api/assets/{ax_number}/depreciation
 ```
 
 ### Summary
 ```
-GET /api/summary/monthly?year_ref=2026&site_location=CLC
-    # Returns: {job: {jan:N, feb:N, ..., total:N}}
+GET /api/summary/monthly?year_ref=2026&site_location=CLC&group_by=job
+    # group_by: job (default) | category | group_name
+    # Source: depreciation_monthly table (consistent with other summary endpoints)
 GET /api/summary/by-group?year_ref=2026&site_location=CLC
-    # Returns: {group_name: {yearly_depreciation, purchase_price, acc_depreciation, net_book_value, count}}
+    # yearly_depreciation from depreciation_monthly (NOT dep_expense_current)
 GET /api/summary/by-category?year_ref=2026&site_location=CLC
-    # Returns: {category: {yearly_depreciation, purchase_price, acc_depreciation, net_book_value, count}}
 GET /api/summary/totals?year_ref=2026&site_location=CLC
-    # Returns: {total_assets, total_purchase_price, total_acc_depreciation, total_net_book_value, total_yearly_depreciation}
 GET /api/summary/site-locations?year_ref=2026
-    # Returns: [{site_location, count}]
 ```
 
-### Import/Export
+### Forecast
 ```
-POST /api/import/excel    # Upload XLSX file (multipart/form-data, field: "file")
+GET /api/forecast/totals?forecast_year=2027&site_location=CLC
+GET /api/forecast/monthly?forecast_year=2027&site_location=CLC&group_by=job
+    # group_by: job | category | group_name
+GET /api/forecast/by-group?forecast_year=2027&site_location=CLC
+GET /api/forecast/by-category?forecast_year=2027&site_location=CLC
+GET /api/forecast/assets?forecast_year=2027&site_location=CLC&page=1&size=100
+    # On-the-fly calc from year_ref=2026 data, no DB writes
+    # forecast_year range: 2027-2030 (any year >= 2026 accepted)
+```
+
+### Export
+```
+GET /api/export/excel?year_ref=2026&site_location=CLC
+    # Returns: StreamingResponse (.xlsx file, multi-sheet)
+    # Sheets: Asset List | Monthly Depreciation | Summary by Group |
+    #         Summary by Category | Acquisitions & Disposals
+    # Filename: depreciation_{year}_{site}_{YYYYMMDD}.xlsx
+```
+
+### Import
+```
+POST /api/import/excel    # Upload XLSX (multipart/form-data, field: "file")
 ```
 
 ### Acquisitions
@@ -220,153 +241,159 @@ PUT/DELETE     /api/acquisitions/{id}
 ## Data & Business Rules
 
 ### Depreciation Method
-**Straight-line method:**
+**Straight-line (recalculate_summary_fields in depreciation.py):**
 ```
-monthly_depreciation = purchase_price / depreciation_period_total
-yearly_depreciation  = monthly_depreciation × months_active_in_year
-acc_depreciation     = monthly_depreciation × periods_elapsed
-net_book_value       = purchase_price - acc_depreciation
+monthly_depreciation      = purchase_price / depreciation_period_total
+dep_period_acc_prev_year  = months elapsed from purchase_date to Dec (year_ref-1), capped at period_total
+dep_period_yearly         = months active in year_ref
+dep_period_until_year     = dep_period_acc_prev_year + dep_period_yearly
+dep_period_remain         = period_total - dep_period_until_year
+acc_depreciation_prev     = monthly × dep_period_acc_prev_year
+net_book_value_prev       = purchase_price - acc_depreciation_prev
+dep_expense_current       = monthly × dep_period_yearly
+acc_depreciation_curr     = monthly × dep_period_until_year
+net_book_value_curr       = purchase_price - acc_depreciation_curr
 ```
+- All values floored to 0
+- If `purchase_date` is null: only `monthly_depreciation` is set, period fields remain as-is
+- `recalculate_asset()` is called on every POST and PUT
 
-### Asset Identifier
+### Summary Data Source (IMPORTANT)
+All summary endpoints (`/summary/monthly`, `/summary/by-group`, `/summary/by-category`, `/summary/totals`) now use `depreciation_monthly.amount` as source — NOT `fixed_assets.dep_expense_current`. This ensures consistency across all summary views.
+
+### Asset URL Key
 - Primary URL key: `fixed_asset_number_ax` (e.g. `BLD000048`)
-- Assets without AX number are skipped during import
-- Fallback in URL: integer `id` (for 2 assets without AX)
+- Fallback: integer `id` (for assets without AX)
 
 ### Year Reference
-- Same physical asset exists in both `year_ref=2025` and `year_ref=2026`
-- Unique constraint is `(fixed_asset_number_ax, year_ref)`
-- Default filter: `year_ref=2026`
+- Same physical asset exists for multiple `year_ref` values
+- Unique constraint: `(fixed_asset_number_ax, year_ref)`
+- Default: `year_ref=2026`
 
 ### Category
-- **File lama** (`Est-Depreciation_Calculation_for_2026_.xlsx`): has Category column → `WH1`, `WH2`, `TRP`, `BALI`, `OTHERS`, `MDN`, `PBG`, `MKS`, `SBY`
-- **File baru** (`Fixed Asset_202606.xlsx`): NO Category column → category preserved from file lama, new assets get `NULL`
-- **IMPORTANT**: Never derive category from `site_location` — user inputs manually
+- From file lama: `WH1`, `WH2`, `TRP`, `BALI`, `OTHERS`, `MDN`, `PBG`, `MKS`, `SBY`
+- From file baru: no Category col → preserved from file lama or NULL for new assets
+- Never derive category from `site_location`
+
+### AssetForm Edit Bug Fix
+- Empty string fields (`""`) from react-hook-form are converted to `null` before PUT request
+- Root cause: `purchase_date=""` caused Pydantic 422 error
 
 ### Data Stats (as of 2026-07-14)
 - year_ref=2026: **1,045 assets**
 - year_ref=2025: 224 assets
-- depreciation_monthly rows: ~15,000+
+- depreciation_monthly rows: ~17,900+
 - acquisition_disposals: 294 records
-- Categories with data: WH1(15), WH2(23), TRP(76), OTHERS(93), BALI(3), MDN/PBG/MKS/SBY(small)
-- Assets with NULL category: 821 (from file baru)
-
----
-
-## Excel Import System
-
-### `excel_importer_v2.py` (ACTIVE — use this)
-Auto-detects file format:
-- Scans rows 1-40 for header containing keywords: `"no."`, `"name of fixed asset"`, `"purchase price"`, `"fixed asset number"`
-- Builds dynamic column map from header — no hardcoded indices
-- **File lama**: header at row 23-24, data from row 26
-- **File baru**: header at row 7-8, data from row 10
-
-**Category logic:**
-- If file has Category column (`has_category=True`): use it
-- If file has NO Category column: set `category=None`, preserve existing DB value on upsert
-
-**Upsert key:** `fixed_asset_number_ax + year_ref`
-
-**Import order matters:**
-1. Import file lama first (with Category)
-2. Import file baru second (preserves Category from step 1)
-
-### `excel_importer.py` (LEGACY — do not use for new imports)
-Hardcoded column indices for file lama only.
 
 ---
 
 ## Frontend Architecture
 
 ### State Management
-- **TanStack Query** for all server state (no Redux/Zustand)
-- Query keys pattern: `['assets', filters]`, `['summary-monthly', year, site]`
+- TanStack Query for all server state
+- Query key patterns: `['assets', filters]`, `['summary-monthly', year, site]`, `['forecast-totals', year, site]`
 
-### Asset URL Key
-- Uses `fixed_asset_number_ax` as URL param: `/assets/BLD000048`
-- Implemented in `AssetList.tsx`: `const key = asset.fixed_asset_number_ax || String(asset.id)`
+### AssetList Features
+- **Client-side sorting**: all columns, click to toggle asc → desc → reset. `SortIcon` component shows ↑↓/↑/↓
+- **Dep filter**: dropdown "All / Active (Remain > 0) / Completed (Remain = 0)" — client-side from fetched data
+- **Size options**: 50, 100, 200, 350 rows (backend max also 350)
+
+### AssetForm Features
+- Realtime depreciation preview panel — `useMemo` on `purchase_price`, `depreciation_period_total`, `purchase_date`, `year_ref`
+- Shows: Monthly Dep, Period breakdown (acc/yearly/until/remain), NBV prev/curr, Dep Expense
+- Warning badge if `purchase_date` empty
+
+### Dashboard Features
+- Monthly Depreciation Detail: group_by=job (default)
+- Summary by Asset Group: toggle Summary/Monthly (group_by=group_name)
+- Summary by Category: toggle Summary/Monthly (group_by=category)
+- All summary data sourced from `depreciation_monthly` table (consistent grand totals)
+
+### ForecastPage (/forecast)
+- Year selector: 2027, 2028, 2029, 2030
+- Site filter
+- 5 summary cards
+- Monthly Forecast table (per job)
+- By Asset Group + By Category with Summary/Monthly toggle
+- Asset Detail table: 2-row grouped header, sticky cols (No, Name), Period/Remain with "mo" unit, "Done" badge for Remain=0, pagination (First/Prev/Page X of Y/Next/Last)
+
+### Export Center (/summary → SummaryReport.tsx)
+- Filter: Year + Site
+- Preview: 4 summary cards + by-group table + category badges
+- Sheet list: 5 sheets description
+- Download button with loading spinner + error handling
+- Triggers `GET /api/export/excel` with `responseType: 'blob'`
 
 ### Chart (Dashboard)
-- **SVG bar chart** (custom, no Recharts) — Recharts was removed due to render issues
-- Component: `SvgBarChart` in `Dashboard.tsx`
-- Stacked bars per job, reactive to `year` and `site` filter changes
-- Y-axis labels use `idrShort()` (B/M/K format)
+- Custom SVG stacked bar chart (no Recharts — removed due to render issues)
 
-### Excel-style Table (AssetList)
-- Multi-level header (3 rows): group headers → sub-headers → formula labels
-- Frozen columns (sticky): No, Site, Job, Asset No, Name
-- Color-coded column groups: blue (ID), green (purchase), yellow (period), orange (2025 values), blue (monthly 2026), purple (2026 values)
-- Grand total footer row
+---
 
-### Known Issues / Past Bugs Fixed
-- `ResponsiveContainer` from Recharts failed to render in Vite → replaced with custom SVG
-- `summary/monthly` 500 error with 1045 assets → fixed by using JOIN instead of IN clause
-- Category derived from site_location on file baru → fixed to preserve or set NULL
-- Unique constraint `uq_asset_no_year_ref` → changed to `uq_ax_year_ref` to support duplicate asset_no in new file
+## Excel Export (openpyxl)
+5-sheet workbook:
+1. **Asset List** — 36 columns, zebra striping, navy header
+2. **Monthly Depreciation** — per job Jan-Des, totals, dark blue header
+3. **Summary by Group** — gray header
+4. **Summary by Category** — cyan header + % of total
+5. **Acquisitions & Disposals** — green header
+
+Styling: bold headers, fill colors, auto column width, freeze row 1, number format `#,##0`, sheet tab colors.
+
+---
+
+## Known Issues / Past Bugs Fixed
+- `ResponsiveContainer` Recharts failed in Vite → replaced with custom SVG
+- `summary/monthly` 500 with 1045 assets → fixed by JOIN instead of IN clause
+- Category derived from site_location → fixed to preserve or set NULL
+- `uq_asset_no_year_ref` → changed to `uq_ax_year_ref`
+- `purchase_date=""` from react-hook-form → 422 on PUT → fixed by cleaning empty strings to null in `onSubmit`
+- Summary inconsistency: `/by-group` used `dep_expense_current` (stale Excel snapshot) while `/monthly` used `depreciation_monthly.amount` → fixed all summary to use `depreciation_monthly` as source
 
 ---
 
 ## Environment Notes
 
 ### Python
-- System Python: `C:\Python314\python.exe` (Python 3.14.5) — used for backend venv
-- Backend venv: `E:\Asset-depre\backend\venv\`
-- Run backend scripts: `& "E:\Asset-depre\backend\venv\Scripts\python.exe" -m app.utils.excel_importer_v2`
+- System Python: `C:\Python314\python.exe`
+- Backend venv: `E:\Github\asset-management\backend\venv\`
 
 ### PowerShell Quirks
-- Use `;` not `&&` for command chaining
-- Use `workdir` parameter in bash tool instead of `cd` inside commands
-- Call executable with spaces: `& "path\to\exe" args`
+- Use `;` not `&&` for chaining
+- Use `workdir` param in bash tool instead of `cd` inside commands
+- Executable with spaces: `& "path\to\exe" args`
 
-### Ports in Use (local machine)
+### Ports in Use
 - 5432: `ngopicode-postgres`
 - 5434: `app-karyawan-postgres`
 - 5435: `kokarsi-postgres`
 - **5436: `asset-depre-db-1`** ← this project
-- 8000: FastAPI backend (this project)
-- 5173: Vite frontend (this project)
+- 8000: FastAPI backend
+- 5173: Vite frontend
 
 ---
 
 ## Common Tasks
 
-### Re-import all data from scratch
-```bash
-# Drop and recreate tables
-venv\Scripts\python -c "
-from app.database import engine, Base
-from app.models import FixedAsset, DepreciationMonthly, AcquisitionDisposal
-Base.metadata.drop_all(bind=engine)
-Base.metadata.create_all(bind=engine)
-"
-# Import file lama first (has Category)
-venv\Scripts\python -m app.utils.excel_importer_v2 --file "E:\Asset-depre\Est-Depreciation_Calculation_for_2026_.xlsx"
-# Import file baru second (preserves Category)
-venv\Scripts\python -m app.utils.excel_importer_v2 --file "E:\Asset-depre\Fixed Asset_202606.xlsx"
-```
-
-### Check data in DB
-```bash
-venv\Scripts\python -c "
-import sys; sys.path.insert(0, r'E:\Asset-depre\backend')
-from app.database import SessionLocal
-from sqlalchemy import text
-db = SessionLocal()
-r = db.execute(text('SELECT year_ref, COUNT(*) FROM fixed_assets GROUP BY year_ref'))
-for row in r: print(row)
-db.close()
-"
-```
-
 ### Verify backend syntax
 ```bash
-& "E:\Asset-depre\backend\venv\Scripts\python.exe" -c "from app.main import app; print('OK')"
+& "E:\Github\asset-management\backend\venv\Scripts\python.exe" -c "from app.main import app; print('OK')"
 ```
 
 ### Build frontend
 ```bash
-npm run build   # from E:\Asset-depre\frontend
+npm run build   # from E:\Github\asset-management\frontend
+```
+
+### Connect to DB (via docker exec)
+```bash
+docker exec asset-depre-db-1 psql -U sankyu -d sankyu_assets -c "SELECT COUNT(*) FROM fixed_assets WHERE year_ref=2026"
+```
+
+### Re-import all data from scratch
+```bash
+docker exec asset-depre-db-1 psql -U sankyu -d sankyu_assets -c "TRUNCATE fixed_assets CASCADE"
+& "E:\Github\asset-management\backend\venv\Scripts\python.exe" -m app.utils.excel_importer_v2 --file "E:\Github\asset-management\Est-Depreciation_Calculation_for_2026_.xlsx"
+& "E:\Github\asset-management\backend\venv\Scripts\python.exe" -m app.utils.excel_importer_v2 --file "E:\Github\asset-management\Fixed Asset_202606.xlsx"
 ```
 
 ---
@@ -375,11 +402,12 @@ npm run build   # from E:\Asset-depre\frontend
 
 | Route | Component | Description |
 |-------|-----------|-------------|
-| `/` | Dashboard | Summary cards, SVG chart, monthly table, by-group, by-category |
-| `/assets` | AssetList | Excel-style table with 50+ columns, filters |
-| `/assets/new` | AssetForm | Add new asset |
+| `/` | Dashboard | Summary cards, SVG chart, monthly/group/category tables with toggles |
+| `/assets` | AssetList | Excel-style table, sort all cols, dep filter, size up to 350 |
+| `/assets/new` | AssetForm | Add asset + realtime depreciation preview |
 | `/assets/:id` | AssetDetail | Detail + Jan-Dec schedule |
-| `/assets/:id/edit` | AssetForm | Edit existing asset |
-| `/summary` | SummaryReport | Monthly by job + by group |
+| `/assets/:id/edit` | AssetForm | Edit asset + realtime depreciation preview |
+| `/forecast` | ForecastPage | Forecast 2027-2030, monthly/group/category, asset detail |
+| `/summary` | SummaryReport | Export Center — download multi-sheet .xlsx |
 | `/acquisitions` | Acquisitions | Acquisition/disposal CRUD |
 | `/import` | ImportExcel | Drag & drop XLSX upload |
