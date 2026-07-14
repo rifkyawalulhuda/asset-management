@@ -68,8 +68,10 @@ export const fetchSummaryTotals = async (year_ref: number, site_location?: strin
   return data
 }
 
-export const fetchSummaryByCategory = async (year_ref: number) => {
-  const { data } = await api.get('/summary/by-category', { params: { year_ref } })
+export const fetchSummaryByCategory = async (year_ref: number, site_location?: string) => {
+  const params: Record<string, unknown> = { year_ref }
+  if (site_location) params.site_location = site_location
+  const { data } = await api.get('/summary/by-category', { params })
   return data
 }
 

@@ -81,37 +81,38 @@ def summary_by_group(
 
 
 @router.get("/by-category")
-def summary_by_category(year_ref: int = 2026, db: Session = Depends(get_db)) -> Dict[str, Any]:
+def summary_by_category(
+    year_ref: int = 2026,
+    site_location: Optional[str] = None,
+    db: Session = Depends(get_db)
+) -> Dict[str, Any]:
     """Returns yearly depreciation subtotals per category (WH1, WH2, TRP, etc.)."""
+    query = db.query(
+        FixedAsset.category,
+        func.sum(FixedAsset.dep_expense_current).label("yearly_total"),
+        func.sum(FixedAsset.purchase_price).label("purchase_total"),
+        func.sum(FixedAsset.acc_depreciation_curr).label("acc_total"),
+        func.sum(FixedAsset.net_book_value_curr).label("nbv_total"),
+        func.count(FixedAsset.id).label("count"),
+    ).filter(FixedAsset.year_ref == year_ref)
+    if site_location:
+        query = query.filter(FixedAsset.site_location == site_location)
     rows = (
-        db.query(
-            FixedAsset.category,
-            FixedAsset.job,
-            func.sum(FixedAsset.dep_expense_current).label("yearly_total"),
-            func.sum(FixedAsset.purchase_price).label("purchase_total"),
-            func.sum(FixedAsset.acc_depreciation_curr).label("acc_total"),
-            func.sum(FixedAsset.net_book_value_curr).label("nbv_total"),
-            func.count(FixedAsset.id).label("count"),
-        )
-        .filter(FixedAsset.year_ref == year_ref)
-        .group_by(FixedAsset.category, FixedAsset.job)
-        .order_by(FixedAsset.job, FixedAsset.category)
+        query
+        .group_by(FixedAsset.category)
+        .order_by(func.sum(FixedAsset.dep_expense_current).desc())
         .all()
     )
-    result: Dict[str, Any] = {}
-    for r in rows:
-        job = r.job or "UNKNOWN"
-        cat = r.category or "UNKNOWN"
-        if job not in result:
-            result[job] = {}
-        result[job][cat] = {
+    return {
+        r.category or "UNKNOWN": {
             "yearly_depreciation": float(r.yearly_total or 0),
             "purchase_price": float(r.purchase_total or 0),
             "acc_depreciation": float(r.acc_total or 0),
             "net_book_value": float(r.nbv_total or 0),
             "count": r.count,
         }
-    return result
+        for r in rows
+    }
 
 
 @router.get("/totals")

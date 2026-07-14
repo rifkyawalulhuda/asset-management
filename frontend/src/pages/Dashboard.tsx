@@ -5,6 +5,7 @@ import {
   fetchSummaryByGroup,
   fetchSummaryTotals,
   fetchSiteLocations,
+  fetchSummaryByCategory,
 } from '../services/assets'
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
@@ -54,6 +55,12 @@ export default function Dashboard() {
   const { data: byGroup } = useQuery({
     queryKey: ['summary-group', year, site],
     queryFn: () => fetchSummaryByGroup(year, site),
+    retry: 1,
+  })
+
+  const { data: byCategory } = useQuery({
+    queryKey: ['summary-category', year, site],
+    queryFn: () => fetchSummaryByCategory(year, site),
     retry: 1,
   })
 
@@ -235,6 +242,81 @@ export default function Dashboard() {
                 <td className="px-3 py-2 text-right">{idr(Object.values(byGroup).reduce((s, d) => s + d.net_book_value, 0))}</td>
                 <td className="px-3 py-2 text-right bg-blue-100">{idr(Object.values(byGroup).reduce((s, d) => s + d.yearly_depreciation, 0))}</td>
               </tr>
+            </tfoot>
+          </table>
+        </div>
+      )}
+
+      {/* Summary by Category */}
+      {byCategory && Object.keys(byCategory).length > 0 && (
+        <div className="bg-white rounded-lg border p-4">
+          <h2 className="font-semibold text-base mb-3">
+            Summary by Category — {year}
+            {site && <span className="ml-2 text-sm font-normal text-orange-500">(Site: {site})</span>}
+          </h2>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-[#0f4c81] text-white text-xs">
+                <th className="px-3 py-2 text-left">Category</th>
+                <th className="px-3 py-2 text-right">Assets</th>
+                <th className="px-3 py-2 text-right">Purchase Price</th>
+                <th className="px-3 py-2 text-right">Acc. Depreciation</th>
+                <th className="px-3 py-2 text-right">Net Book Value</th>
+                <th className="px-3 py-2 text-right bg-[#1e3a8a]">Yearly Depreciation</th>
+                <th className="px-3 py-2 text-right bg-[#1e3a8a]">% of Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(() => {
+                const totalYearly = Object.values(byCategory as Record<string, {yearly_depreciation: number; purchase_price: number; acc_depreciation: number; net_book_value: number; count: number}>)
+                  .reduce((s, d) => s + d.yearly_depreciation, 0)
+                return Object.entries(byCategory as Record<string, {yearly_depreciation: number; purchase_price: number; acc_depreciation: number; net_book_value: number; count: number}>)
+                  .map(([cat, d], idx) => {
+                    const pct = totalYearly > 0 ? (d.yearly_depreciation / totalYearly * 100) : 0
+                    return (
+                      <tr key={cat} className={idx % 2 === 0 ? 'bg-white' : 'bg-blue-50'}>
+                        <td className="px-3 py-2 font-medium">
+                          <span className="inline-flex items-center gap-1.5">
+                            <span className="w-2 h-2 rounded-full bg-blue-500 flex-shrink-0" />
+                            {cat}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2 text-right">{d.count}</td>
+                        <td className="px-3 py-2 text-right">{idr(d.purchase_price)}</td>
+                        <td className="px-3 py-2 text-right">{idr(d.acc_depreciation)}</td>
+                        <td className="px-3 py-2 text-right">{idr(d.net_book_value)}</td>
+                        <td className="px-3 py-2 text-right font-bold text-blue-700 bg-blue-50">{idr(d.yearly_depreciation)}</td>
+                        <td className="px-3 py-2 text-right bg-blue-50">
+                          <div className="flex items-center gap-2 justify-end">
+                            <div className="w-16 bg-gray-100 rounded-full h-1.5 overflow-hidden">
+                              <div
+                                className="h-1.5 rounded-full bg-blue-500"
+                                style={{ width: `${pct.toFixed(1)}%` }}
+                              />
+                            </div>
+                            <span className="text-xs text-gray-500 w-10 text-right">{pct.toFixed(1)}%</span>
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  })
+              })()}
+            </tbody>
+            <tfoot>
+              {(() => {
+                const cats = byCategory as Record<string, {yearly_depreciation: number; purchase_price: number; acc_depreciation: number; net_book_value: number; count: number}>
+                return (
+                  <tr className="bg-gray-100 font-bold text-sm border-t-2 border-gray-300">
+                    <td className="px-3 py-2">TOTAL</td>
+                    <td className="px-3 py-2 text-right">{Object.values(cats).reduce((s, d) => s + d.count, 0)}</td>
+                    <td className="px-3 py-2 text-right">{idr(Object.values(cats).reduce((s, d) => s + d.purchase_price, 0))}</td>
+                    <td className="px-3 py-2 text-right">{idr(Object.values(cats).reduce((s, d) => s + d.acc_depreciation, 0))}</td>
+                    <td className="px-3 py-2 text-right">{idr(Object.values(cats).reduce((s, d) => s + d.net_book_value, 0))}</td>
+                    <td className="px-3 py-2 text-right bg-blue-100">{idr(Object.values(cats).reduce((s, d) => s + d.yearly_depreciation, 0))}</td>
+                    <td className="px-3 py-2 text-right bg-blue-100">100%</td>
+                  </tr>
+                )
+              })()}
             </tfoot>
           </table>
         </div>
