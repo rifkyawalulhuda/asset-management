@@ -18,30 +18,32 @@ def summary_monthly(
     db: Session = Depends(get_db)
 ) -> Dict[str, Any]:
     """Returns monthly depreciation totals grouped by job category."""
-    query = db.query(FixedAsset).filter(FixedAsset.year_ref == year_ref)
-    if site_location:
-        query = query.filter(FixedAsset.site_location == site_location)
-    assets = query.all()
-    asset_ids = [a.id for a in assets]
-    job_map = {a.id: a.job for a in assets}
-
-    rows = (
-        db.query(DepreciationMonthly)
+    # Use JOIN instead of two queries + IN clause (more efficient for large datasets)
+    query = (
+        db.query(
+            FixedAsset.job,
+            DepreciationMonthly.month,
+            func.sum(DepreciationMonthly.amount).label("total"),
+        )
+        .join(DepreciationMonthly, DepreciationMonthly.asset_id == FixedAsset.id)
         .filter(
-            DepreciationMonthly.asset_id.in_(asset_ids),
+            FixedAsset.year_ref == year_ref,
             DepreciationMonthly.year == year_ref,
         )
-        .all()
     )
+    if site_location:
+        query = query.filter(FixedAsset.site_location == site_location)
+
+    rows = query.group_by(FixedAsset.job, DepreciationMonthly.month).all()
 
     result: Dict[str, Dict] = {}
     for row in rows:
-        job = job_map.get(row.asset_id, "UNKNOWN")
+        job = row.job or "UNKNOWN"
         if job not in result:
             result[job] = {m: 0 for m in MONTHS}
             result[job]["total"] = 0
         month_key = MONTHS[row.month - 1]
-        amount = float(row.amount or 0)
+        amount = float(row.total or 0)
         result[job][month_key] += amount
         result[job]["total"] += amount
 
