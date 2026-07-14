@@ -101,3 +101,21 @@ def summary_by_category(year_ref: int = 2026, db: Session = Depends(get_db)) -> 
             "count": r.count,
         }
     return result
+
+
+@router.get("/site-locations")
+def get_site_locations(year_ref: Optional[int] = None, db: Session = Depends(get_db)):
+    """Returns distinct site_location values with asset count, sorted by count desc."""
+    query = db.query(
+        FixedAsset.site_location,
+        func.count(FixedAsset.id).label("count"),
+    ).filter(FixedAsset.site_location.isnot(None))
+    if year_ref:
+        query = query.filter(FixedAsset.year_ref == year_ref)
+    rows = (
+        query
+        .group_by(FixedAsset.site_location)
+        .order_by(func.count(FixedAsset.id).desc())
+        .all()
+    )
+    return [{"site_location": r.site_location, "count": r.count} for r in rows]

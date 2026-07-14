@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
-import { fetchAssets, deleteAsset } from '../services/assets'
+import { fetchAssets, deleteAsset, fetchSiteLocations } from '../services/assets'
 import { formatDate } from '../utils/format'
 import type { AssetFilters, FixedAsset } from '../types'
 
@@ -53,6 +53,13 @@ export default function AssetList() {
     queryFn: () => fetchAssets(filters),
   })
 
+  // Fetch site locations dynamically
+  const { data: siteLocations } = useQuery({
+    queryKey: ['site-locations', filters.year_ref],
+    queryFn: () => fetchSiteLocations(filters.year_ref),
+    staleTime: 60000,
+  })
+
   const deleteMut = useMutation({
     mutationFn: deleteAsset,
     onSuccess: () => qc.invalidateQueries({ queryKey: ['assets'] }),
@@ -95,6 +102,14 @@ export default function AssetList() {
         <select onChange={e => handleFilter('category', e.target.value)} className="border rounded px-2 py-1 text-xs">
           <option value="">All Categories</option>
           {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+        </select>
+        <select onChange={e => handleFilter('site_location', e.target.value)} className="border rounded px-2 py-1 text-xs">
+          <option value="">All Sites</option>
+          {siteLocations?.map(s => (
+            <option key={s.site_location} value={s.site_location}>
+              {s.site_location} ({s.count})
+            </option>
+          ))}
         </select>
         <select onChange={e => handleFilter('year_ref', e.target.value)} className="border rounded px-2 py-1 text-xs">
           <option value="2026">2026</option>

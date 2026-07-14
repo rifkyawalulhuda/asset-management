@@ -62,6 +62,11 @@ export const fetchSummaryByCategory = async (year_ref: number) => {
   return data
 }
 
+export const fetchSiteLocations = async (year_ref?: number): Promise<{ site_location: string; count: number }[]> => {
+  const { data } = await api.get('/summary/site-locations', { params: year_ref ? { year_ref } : {} })
+  return data
+}
+
 // Import Excel
 export const importExcel = async (file: File) => {
   const formData = new FormData()
