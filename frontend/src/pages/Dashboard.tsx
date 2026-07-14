@@ -116,7 +116,7 @@ export default function Dashboard() {
         <StatCard label={`Yearly Depr. ${year}`} value={totals ? idr(totals.total_yearly_depreciation) : '-'} color="blue" loading={loadingTotals} />
       </div>
 
-      {/* CSS Bar Chart */}
+      {/* SVG Bar Chart */}
       <div className="bg-white rounded-lg border p-4">
         <div className="mb-3">
           <h2 className="font-semibold text-base">Monthly Depreciation {year}</h2>
@@ -127,61 +127,24 @@ export default function Dashboard() {
         </div>
 
         {loadingMonthly ? (
-          <div className="h-48 flex items-center justify-center text-gray-400 text-sm">Loading...</div>
+          <div className="h-56 flex items-center justify-center text-gray-400 text-sm">Loading...</div>
         ) : jobs.length === 0 ? (
-          <div className="h-48 flex items-center justify-center text-gray-400 text-sm">No data</div>
+          <div className="h-56 flex items-center justify-center text-gray-400 text-sm">No data</div>
         ) : (
-          <div className="flex items-end gap-1 h-48 px-2">
-            {MONTHS.map((month, mi) => {
-              const total = monthlyTotals[mi]
-              const heightPct = maxMonthlyTotal > 0 ? (total / maxMonthlyTotal) * 100 : 0
-              // Build stacked segments for top 8 jobs
-              let accumulated = 0
-              const segments = jobs.slice(0, 15).map((job, ji) => {
-                const val = (monthly![job] as Record<string, number>)[MONTH_KEYS[mi]] || 0
-                const pct = maxMonthlyTotal > 0 ? (val / maxMonthlyTotal) * 100 : 0
-                accumulated += pct
-                return { job, val, pct, color: JOB_COLORS[ji % JOB_COLORS.length] }
-              }).filter(s => s.val > 0)
-
-              return (
-                <div key={month} className="flex-1 flex flex-col items-center gap-1">
-                  <div className="text-[9px] text-gray-500">{idrShort(total)}</div>
-                  <div
-                    className="w-full flex flex-col-reverse rounded-t overflow-hidden cursor-pointer group relative"
-                    style={{ height: `${Math.max(heightPct, 2)}%` }}
-                    title={`${month}: ${idr(total)}`}
-                  >
-                    {segments.map(seg => (
-                      <div
-                        key={seg.job}
-                        style={{
-                          height: `${(seg.val / Math.max(total, 1)) * 100}%`,
-                          backgroundColor: seg.color,
-                          minHeight: seg.val > 0 ? '2px' : '0',
-                        }}
-                        title={`${seg.job}: ${idr(seg.val)}`}
-                      />
-                    ))}
-                    {/* Tooltip on hover */}
-                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover:block bg-gray-800 text-white text-[9px] rounded px-1.5 py-1 whitespace-nowrap z-10">
-                      {month}: {idr(total)}
-                    </div>
-                  </div>
-                  <div className="text-[10px] text-gray-600 font-medium">{month}</div>
-                </div>
-              )
-            })}
-          </div>
+          <SvgBarChart
+            months={MONTHS}
+            monthlyTotals={monthlyTotals}
+            maxTotal={maxMonthlyTotal}
+          />
         )}
 
         {/* Legend */}
         {!loadingMonthly && jobs.length > 0 && (
-          <div className="mt-3 flex flex-wrap gap-2">
+          <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1.5 border-t pt-3">
             {jobs.slice(0, 15).map((job, i) => (
-              <div key={job} className="flex items-center gap-1">
-                <div className="w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ backgroundColor: JOB_COLORS[i % JOB_COLORS.length] }} />
-                <span className="text-[10px] text-gray-600">{job}</span>
+              <div key={job} className="flex items-center gap-1.5">
+                <div className="w-3 h-3 rounded-sm flex-shrink-0" style={{ backgroundColor: JOB_COLORS[i % JOB_COLORS.length] }} />
+                <span className="text-[11px] text-gray-600">{job}</span>
               </div>
             ))}
           </div>
@@ -294,5 +257,115 @@ function StatCard({ label, value, sub, color, loading }: {
       {loading ? <div className="h-5 bg-gray-200 animate-pulse rounded w-3/4" /> : <div className="font-bold text-sm leading-tight">{value}</div>}
       {sub && <div className="text-[10px] text-gray-400 mt-1">{sub}</div>}
     </div>
+  )
+}
+
+// SVG Bar Chart — deterministic, no Recharts dependency
+function SvgBarChart({
+  months,
+  monthlyTotals,
+  maxTotal,
+}: {
+  months: string[]
+  monthlyTotals: number[]
+  maxTotal: number
+}) {
+  const W = 780          // total SVG width
+  const H = 220          // chart area height
+  const PAD_L = 70       // left padding for Y-axis labels
+  const PAD_R = 20       // right padding
+  const PAD_T = 20       // top padding
+  const PAD_B = 30       // bottom padding for X-axis labels
+  const chartW = W - PAD_L - PAD_R
+  const chartH = H - PAD_T - PAD_B
+  const barCount = months.length
+  const groupW = chartW / barCount
+  const barW = Math.max(groupW * 0.6, 20)
+  const barGap = (groupW - barW) / 2
+
+  // Y-axis gridlines (5 levels)
+  const gridLevels = 5
+  const yTicks = Array.from({ length: gridLevels + 1 }, (_, i) => i / gridLevels)
+
+  return (
+    <svg
+      viewBox={`0 0 ${W} ${H}`}
+      width="100%"
+      style={{ display: 'block', maxHeight: 220 }}
+    >
+      {/* Grid lines + Y labels */}
+      {yTicks.map((t, i) => {
+        const y = PAD_T + chartH * (1 - t)
+        const val = maxTotal * t
+        return (
+          <g key={i}>
+            <line
+              x1={PAD_L} y1={y}
+              x2={PAD_L + chartW} y2={y}
+              stroke={i === 0 ? '#94a3b8' : '#e2e8f0'}
+              strokeWidth={i === 0 ? 1.5 : 1}
+            />
+            <text
+              x={PAD_L - 6} y={y + 4}
+              textAnchor="end"
+              fontSize={10}
+              fill="#94a3b8"
+            >
+              {idrShort(val)}
+            </text>
+          </g>
+        )
+      })}
+
+      {/* Bars */}
+      {months.map((month, mi) => {
+        const total = monthlyTotals[mi]
+        const barH = maxTotal > 0 ? (total / maxTotal) * chartH : 0
+        const x = PAD_L + mi * groupW + barGap
+        const y = PAD_T + chartH - barH
+
+        return (
+          <g key={month}>
+            {/* Bar */}
+            <rect
+              x={x}
+              y={y}
+              width={barW}
+              height={Math.max(barH, 0)}
+              fill="#1d4ed8"
+              rx={3}
+              opacity={0.85}
+            >
+              <title>{month}: {idr(total)}</title>
+            </rect>
+
+            {/* Value label on top of bar */}
+            {barH > 18 && (
+              <text
+                x={x + barW / 2}
+                y={y - 4}
+                textAnchor="middle"
+                fontSize={9}
+                fill="#475569"
+              >
+                {idrShort(total)}
+              </text>
+            )}
+
+            {/* X-axis label */}
+            <text
+              x={x + barW / 2}
+              y={PAD_T + chartH + 18}
+              textAnchor="middle"
+              fontSize={11}
+              fill="#64748b"
+              fontWeight="500"
+            >
+              {month}
+            </text>
+          </g>
+        )
+      })}
+    </svg>
   )
 }
