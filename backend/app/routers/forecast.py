@@ -7,18 +7,11 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.fixed_asset import FixedAsset
 from app.models.planned_asset import PlannedAsset
+from app.services.depreciation import months_elapsed
 
 router = APIRouter(prefix="/forecast", tags=["forecast"])
 
 MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
-
-
-def months_elapsed(purchase_date: date, target_year: int, target_month: int) -> int:
-    """Months elapsed from purchase_date up to end of target_month/year (inclusive)."""
-    sy = purchase_date.year
-    sm = purchase_date.month
-    elapsed = (target_year - sy) * 12 + (target_month - sm) + 1
-    return max(0, elapsed)
 
 
 def calc_asset_forecast(asset: FixedAsset, forecast_year: int) -> Optional[Dict]:

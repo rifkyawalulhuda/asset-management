@@ -15,6 +15,7 @@ from app.models.fixed_asset import FixedAsset
 from app.models.depreciation_monthly import DepreciationMonthly
 from app.models.acquisition_disposal import AcquisitionDisposal
 from app.models.planned_asset import PlannedAsset
+from app.services.depreciation import months_elapsed as _months_elapsed_fc
 
 router = APIRouter(prefix="/export", tags=["export"])
 
@@ -369,10 +370,6 @@ def export_excel(
 
 
 # ── Forecast export helpers ────────────────────────────────────────────────────
-
-def _months_elapsed_fc(purchase_date: date, target_year: int, target_month: int) -> int:
-    sy, sm = purchase_date.year, purchase_date.month
-    return max(0, (target_year - sy) * 12 + (target_month - sm) + 1)
 
 
 def _calc_planned_fc(asset: PlannedAsset, forecast_year: int):
