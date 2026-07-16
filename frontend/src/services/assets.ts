@@ -92,39 +92,87 @@ export const importExcel = async (file: File) => {
 }
 
 // Forecast
-export const fetchForecastTotals = async (forecast_year: number, site_location?: string) => {
+export const fetchForecastTotals = async (forecast_year: number, site_location?: string, include_planned?: boolean) => {
   const params: Record<string, unknown> = { forecast_year }
   if (site_location) params.site_location = site_location
+  if (include_planned) params.include_planned = true
   const { data } = await api.get('/forecast/totals', { params })
   return data
 }
 
-export const fetchForecastMonthly = async (forecast_year: number, site_location?: string, group_by?: 'job' | 'category' | 'group_name') => {
+export const fetchForecastMonthly = async (forecast_year: number, site_location?: string, group_by?: 'job' | 'category' | 'group_name', include_planned?: boolean) => {
   const params: Record<string, unknown> = { forecast_year }
   if (site_location) params.site_location = site_location
   if (group_by) params.group_by = group_by
+  if (include_planned) params.include_planned = true
   const { data } = await api.get('/forecast/monthly', { params })
   return data
 }
 
-export const fetchForecastByGroup = async (forecast_year: number, site_location?: string) => {
+export const fetchForecastByGroup = async (forecast_year: number, site_location?: string, include_planned?: boolean) => {
   const params: Record<string, unknown> = { forecast_year }
   if (site_location) params.site_location = site_location
+  if (include_planned) params.include_planned = true
   const { data } = await api.get('/forecast/by-group', { params })
   return data
 }
 
-export const fetchForecastByCategory = async (forecast_year: number, site_location?: string) => {
+export const fetchForecastByCategory = async (forecast_year: number, site_location?: string, include_planned?: boolean) => {
   const params: Record<string, unknown> = { forecast_year }
   if (site_location) params.site_location = site_location
+  if (include_planned) params.include_planned = true
   const { data } = await api.get('/forecast/by-category', { params })
   return data
 }
 
 export const fetchForecastAssets = async (
   forecast_year: number,
-  params?: { site_location?: string; group_name?: string; category?: string; search?: string; page?: number; size?: number }
+  params?: { site_location?: string; group_name?: string; category?: string; search?: string; page?: number; size?: number; include_planned?: boolean }
 ) => {
   const { data } = await api.get('/forecast/assets', { params: { forecast_year, ...params } })
   return data
+}
+
+// Planned Assets
+export const fetchPlannedAssets = async (forecast_year?: number, site_location?: string) => {
+  const params: Record<string, unknown> = {}
+  if (forecast_year) params.forecast_year = forecast_year
+  if (site_location) params.site_location = site_location
+  const { data } = await api.get('/planned-assets', { params })
+  return data
+}
+
+export const createPlannedAsset = async (payload: {
+  forecast_year: number
+  name: string
+  purchase_price?: number
+  depreciation_period_total?: number
+  planned_purchase_month: number
+  planned_purchase_year: number
+  site_location?: string
+  job?: string
+  category?: string
+  group_name?: string
+}) => {
+  const { data } = await api.post('/planned-assets', payload)
+  return data
+}
+
+export const updatePlannedAsset = async (id: number, payload: Partial<{
+  name: string
+  purchase_price: number
+  depreciation_period_total: number
+  planned_purchase_month: number
+  planned_purchase_year: number
+  site_location: string
+  job: string
+  category: string
+  group_name: string
+}>) => {
+  const { data } = await api.put(`/planned-assets/${id}`, payload)
+  return data
+}
+
+export const deletePlannedAsset = async (id: number): Promise<void> => {
+  await api.delete(`/planned-assets/${id}`)
 }

@@ -3,10 +3,10 @@ from decimal import Decimal
 from datetime import date
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import func
 
 from app.database import get_db
 from app.models.fixed_asset import FixedAsset
+from app.models.planned_asset import PlannedAsset
 
 router = APIRouter(prefix="/forecast", tags=["forecast"])
 
@@ -22,10 +22,7 @@ def months_elapsed(purchase_date: date, target_year: int, target_month: int) -> 
 
 
 def calc_asset_forecast(asset: FixedAsset, forecast_year: int) -> Optional[Dict]:
-    """
-    Calculate forecasted depreciation for a single asset for the given year.
-    Returns None if asset has no price/period data.
-    """
+    """Calculate forecasted depreciation for a single existing asset."""
     if not asset.purchase_price or not asset.depreciation_period_total:
         return None
 
@@ -37,19 +34,16 @@ def calc_asset_forecast(asset: FixedAsset, forecast_year: int) -> Optional[Dict]
     monthly = price / period
     prev_year = forecast_year - 1
 
-    # Months elapsed up to end of prev_year
     if asset.purchase_date:
         acc_prev = min(months_elapsed(asset.purchase_date, prev_year, 12), period)
         acc_curr = min(months_elapsed(asset.purchase_date, forecast_year, 12), period)
     else:
-        # No purchase date — cannot determine active months
         acc_prev = 0
         acc_curr = 0
 
     yearly = max(0, acc_curr - acc_prev)
     remain = max(0, period - acc_curr)
 
-    # Per-month amounts
     month_amounts = []
     for m in range(1, 13):
         if asset.purchase_date:
@@ -60,11 +54,8 @@ def calc_asset_forecast(asset: FixedAsset, forecast_year: int) -> Optional[Dict]
         month_amounts.append(monthly if active else 0.0)
 
     total_year = sum(month_amounts)
-
-    # Book values (projected)
     acc_dep_prev = monthly * acc_prev
     acc_dep_curr = monthly * acc_curr
-    nbv_curr = max(0.0, price - acc_dep_curr)
 
     return {
         "id": asset.id,
@@ -87,9 +78,72 @@ def calc_asset_forecast(asset: FixedAsset, forecast_year: int) -> Optional[Dict]
         "nbv_prev": max(0.0, price - acc_dep_prev),
         "dep_expense_current": total_year,
         "acc_depreciation_curr": acc_dep_curr,
-        "nbv_curr": nbv_curr,
+        "nbv_curr": max(0.0, price - acc_dep_curr),
         "months": {MONTHS[i]: month_amounts[i] for i in range(12)},
         "total_year": total_year,
+        "is_planned": False,
+    }
+
+
+def calc_planned_forecast(asset: PlannedAsset, forecast_year: int) -> Optional[Dict]:
+    """Calculate forecasted depreciation for a planned (future) asset."""
+    if not asset.purchase_price or not asset.depreciation_period_total:
+        return None
+
+    price = float(asset.purchase_price)
+    period = int(asset.depreciation_period_total)
+    if period <= 0:
+        return None
+
+    monthly = price / period
+    prev_year = forecast_year - 1
+
+    # Build purchase_date from month+year (use day=1)
+    purchase_date = date(asset.planned_purchase_year, asset.planned_purchase_month, 1)
+
+    acc_prev = min(months_elapsed(purchase_date, prev_year, 12), period)
+    acc_curr = min(months_elapsed(purchase_date, forecast_year, 12), period)
+
+    yearly = max(0, acc_curr - acc_prev)
+    remain = max(0, period - acc_curr)
+
+    month_amounts = []
+    for m in range(1, 13):
+        elapsed = months_elapsed(purchase_date, forecast_year, m)
+        active = 0 < elapsed <= period
+        month_amounts.append(monthly if active else 0.0)
+
+    total_year = sum(month_amounts)
+    acc_dep_prev = monthly * acc_prev
+    acc_dep_curr = monthly * acc_curr
+
+    return {
+        "id": asset.id,
+        "fixed_asset_number_ax": None,
+        "asset_no": f"PLANNED-{asset.id}",
+        "name": asset.name,
+        "group_name": asset.group_name,
+        "category": asset.category,
+        "site_location": asset.site_location,
+        "job": asset.job,
+        "purchase_price": price,
+        "purchase_date": str(purchase_date),
+        "depreciation_period_total": period,
+        "monthly_depreciation": monthly,
+        "dep_period_acc_prev_year": acc_prev,
+        "dep_period_yearly": yearly,
+        "dep_period_until_year": acc_curr,
+        "dep_period_remain": remain,
+        "acc_depreciation_prev": acc_dep_prev,
+        "nbv_prev": max(0.0, price - acc_dep_prev),
+        "dep_expense_current": total_year,
+        "acc_depreciation_curr": acc_dep_curr,
+        "nbv_curr": max(0.0, price - acc_dep_curr),
+        "months": {MONTHS[i]: month_amounts[i] for i in range(12)},
+        "total_year": total_year,
+        "is_planned": True,
+        "planned_purchase_month": asset.planned_purchase_month,
+        "planned_purchase_year": asset.planned_purchase_year,
     }
 
 
@@ -101,14 +155,32 @@ def get_assets(db: Session, site_location: Optional[str], year_ref: int = 2026) 
     return q.all()
 
 
+def get_planned_assets(db: Session, forecast_year: int, site_location: Optional[str]) -> List[PlannedAsset]:
+    """Fetch planned assets for the given forecast year."""
+    q = db.query(PlannedAsset).filter(PlannedAsset.forecast_year == forecast_year)
+    if site_location:
+        q = q.filter(PlannedAsset.site_location == site_location)
+    return q.all()
+
+
+def get_group_key(fc: Dict, group_by: str) -> str:
+    if group_by == "category":
+        return fc["category"] or "UNKNOWN"
+    elif group_by == "group_name":
+        return fc["group_name"] or "UNKNOWN"
+    return fc["job"] or "UNKNOWN"
+
+
 @router.get("/totals")
 def forecast_totals(
     forecast_year: int = Query(2027, ge=2026),
     site_location: Optional[str] = None,
+    include_planned: bool = False,
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
     """Returns overall totals for the forecasted year."""
     assets = get_assets(db, site_location)
+
     total_assets = len(assets)
     total_purchase = 0.0
     total_yearly_dep = 0.0
@@ -123,6 +195,24 @@ def forecast_totals(
             total_acc_dep += fc["acc_depreciation_curr"]
             total_nbv += fc["nbv_curr"]
 
+    # Planned assets contribution
+    planned_purchase = 0.0
+    planned_yearly_dep = 0.0
+    planned_acc_dep = 0.0
+    planned_nbv = 0.0
+    planned_count = 0
+
+    if include_planned:
+        planned = get_planned_assets(db, forecast_year, site_location)
+        for asset in planned:
+            fc = calc_planned_forecast(asset, forecast_year)
+            if fc:
+                planned_purchase += fc["purchase_price"]
+                planned_yearly_dep += fc["dep_expense_current"]
+                planned_acc_dep += fc["acc_depreciation_curr"]
+                planned_nbv += fc["nbv_curr"]
+                planned_count += 1
+
     return {
         "forecast_year": forecast_year,
         "total_assets": total_assets,
@@ -130,6 +220,13 @@ def forecast_totals(
         "total_yearly_depreciation": total_yearly_dep,
         "total_acc_depreciation": total_acc_dep,
         "total_net_book_value": total_nbv,
+        "planned_count": planned_count,
+        "planned_purchase_price": planned_purchase,
+        "planned_yearly_depreciation": planned_yearly_dep,
+        "planned_acc_depreciation": planned_acc_dep,
+        "planned_net_book_value": planned_nbv,
+        "combined_yearly_depreciation": total_yearly_dep + planned_yearly_dep,
+        "combined_net_book_value": total_nbv + planned_nbv,
     }
 
 
@@ -138,6 +235,7 @@ def forecast_monthly(
     forecast_year: int = Query(2027, ge=2026),
     site_location: Optional[str] = None,
     group_by: str = Query("job", pattern="^(job|category|group_name)$"),
+    include_planned: bool = False,
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
     """Returns monthly depreciation totals grouped by job, category, or group_name."""
@@ -148,21 +246,31 @@ def forecast_monthly(
         fc = calc_asset_forecast(asset, forecast_year)
         if not fc:
             continue
-
-        if group_by == "category":
-            key = fc["category"] or "UNKNOWN"
-        elif group_by == "group_name":
-            key = fc["group_name"] or "UNKNOWN"
-        else:
-            key = fc["job"] or "UNKNOWN"
-
+        key = get_group_key(fc, group_by)
         if key not in result:
             result[key] = {m: 0.0 for m in MONTHS}
             result[key]["total"] = 0.0
-
+            result[key]["planned"] = {m: 0.0 for m in MONTHS}
+            result[key]["planned_total"] = 0.0
         for m in MONTHS:
             result[key][m] += fc["months"][m]
         result[key]["total"] += fc["total_year"]
+
+    if include_planned:
+        planned = get_planned_assets(db, forecast_year, site_location)
+        for asset in planned:
+            fc = calc_planned_forecast(asset, forecast_year)
+            if not fc:
+                continue
+            key = get_group_key(fc, group_by)
+            if key not in result:
+                result[key] = {m: 0.0 for m in MONTHS}
+                result[key]["total"] = 0.0
+                result[key]["planned"] = {m: 0.0 for m in MONTHS}
+                result[key]["planned_total"] = 0.0
+            for m in MONTHS:
+                result[key]["planned"][m] += fc["months"][m]
+            result[key]["planned_total"] += fc["total_year"]
 
     return result
 
@@ -171,6 +279,7 @@ def forecast_monthly(
 def forecast_by_group(
     forecast_year: int = Query(2027, ge=2026),
     site_location: Optional[str] = None,
+    include_planned: bool = False,
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
     """Returns yearly depreciation subtotals per group_name for the forecasted year."""
@@ -181,21 +290,30 @@ def forecast_by_group(
         fc = calc_asset_forecast(asset, forecast_year)
         if not fc:
             continue
-
         key = fc["group_name"] or "Unknown"
         if key not in result:
-            result[key] = {
-                "yearly_depreciation": 0.0,
-                "purchase_price": 0.0,
-                "acc_depreciation": 0.0,
-                "net_book_value": 0.0,
-                "count": 0,
-            }
+            result[key] = {"yearly_depreciation": 0.0, "purchase_price": 0.0,
+                           "acc_depreciation": 0.0, "net_book_value": 0.0, "count": 0,
+                           "planned_yearly": 0.0, "planned_count": 0}
         result[key]["yearly_depreciation"] += fc["dep_expense_current"]
         result[key]["purchase_price"] += fc["purchase_price"]
         result[key]["acc_depreciation"] += fc["acc_depreciation_curr"]
         result[key]["net_book_value"] += fc["nbv_curr"]
         result[key]["count"] += 1
+
+    if include_planned:
+        planned = get_planned_assets(db, forecast_year, site_location)
+        for asset in planned:
+            fc = calc_planned_forecast(asset, forecast_year)
+            if not fc:
+                continue
+            key = fc["group_name"] or "Unknown"
+            if key not in result:
+                result[key] = {"yearly_depreciation": 0.0, "purchase_price": 0.0,
+                               "acc_depreciation": 0.0, "net_book_value": 0.0, "count": 0,
+                               "planned_yearly": 0.0, "planned_count": 0}
+            result[key]["planned_yearly"] += fc["dep_expense_current"]
+            result[key]["planned_count"] += 1
 
     return result
 
@@ -204,6 +322,7 @@ def forecast_by_group(
 def forecast_by_category(
     forecast_year: int = Query(2027, ge=2026),
     site_location: Optional[str] = None,
+    include_planned: bool = False,
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
     """Returns yearly depreciation subtotals per category for the forecasted year."""
@@ -214,23 +333,31 @@ def forecast_by_category(
         fc = calc_asset_forecast(asset, forecast_year)
         if not fc:
             continue
-
         key = fc["category"] or "UNKNOWN"
         if key not in result:
-            result[key] = {
-                "yearly_depreciation": 0.0,
-                "purchase_price": 0.0,
-                "acc_depreciation": 0.0,
-                "net_book_value": 0.0,
-                "count": 0,
-            }
+            result[key] = {"yearly_depreciation": 0.0, "purchase_price": 0.0,
+                           "acc_depreciation": 0.0, "net_book_value": 0.0, "count": 0,
+                           "planned_yearly": 0.0, "planned_count": 0}
         result[key]["yearly_depreciation"] += fc["dep_expense_current"]
         result[key]["purchase_price"] += fc["purchase_price"]
         result[key]["acc_depreciation"] += fc["acc_depreciation_curr"]
         result[key]["net_book_value"] += fc["nbv_curr"]
         result[key]["count"] += 1
 
-    # Sort by yearly_depreciation desc
+    if include_planned:
+        planned = get_planned_assets(db, forecast_year, site_location)
+        for asset in planned:
+            fc = calc_planned_forecast(asset, forecast_year)
+            if not fc:
+                continue
+            key = fc["category"] or "UNKNOWN"
+            if key not in result:
+                result[key] = {"yearly_depreciation": 0.0, "purchase_price": 0.0,
+                               "acc_depreciation": 0.0, "net_book_value": 0.0, "count": 0,
+                               "planned_yearly": 0.0, "planned_count": 0}
+            result[key]["planned_yearly"] += fc["dep_expense_current"]
+            result[key]["planned_count"] += 1
+
     return dict(sorted(result.items(), key=lambda x: x[1]["yearly_depreciation"], reverse=True))
 
 
@@ -241,6 +368,7 @@ def forecast_assets(
     group_name: Optional[str] = None,
     category: Optional[str] = None,
     search: Optional[str] = None,
+    include_planned: bool = False,
     page: int = Query(1, ge=1),
     size: int = Query(100, ge=1, le=350),
     db: Session = Depends(get_db),
@@ -250,7 +378,6 @@ def forecast_assets(
 
     rows = []
     for asset in assets:
-        # Apply filters
         if group_name and asset.group_name != group_name:
             continue
         if category and asset.category != category:
@@ -259,15 +386,28 @@ def forecast_assets(
             s = search.lower()
             if s not in (asset.name or "").lower() and s not in (asset.asset_no or "").lower() and s not in (asset.fixed_asset_number_ax or "").lower():
                 continue
-
         fc = calc_asset_forecast(asset, forecast_year)
         if fc:
             rows.append(fc)
 
+    if include_planned:
+        planned = get_planned_assets(db, forecast_year, site_location)
+        for asset in planned:
+            if group_name and asset.group_name != group_name:
+                continue
+            if category and asset.category != category:
+                continue
+            if search:
+                s = search.lower()
+                if s not in (asset.name or "").lower():
+                    continue
+            fc = calc_planned_forecast(asset, forecast_year)
+            if fc:
+                rows.append(fc)
+
     total = len(rows)
     start = (page - 1) * size
-    end = start + size
-    items = rows[start:end]
+    items = rows[start:start + size]
 
     return {
         "forecast_year": forecast_year,
