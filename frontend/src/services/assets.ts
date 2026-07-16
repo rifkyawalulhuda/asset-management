@@ -184,3 +184,27 @@ export const updatePlannedAsset = async (id: number, payload: Partial<{
 export const deletePlannedAsset = async (id: number): Promise<void> => {
   await api.delete(`/planned-assets/${id}`)
 }
+
+// Forecast Excel Export
+export const downloadForecastExcel = async (forecast_year: number, site_location?: string): Promise<void> => {
+  const params: Record<string, string> = { forecast_year: String(forecast_year) }
+  if (site_location) params.site_location = site_location
+
+  const response = await api.get('/export/forecast-excel', {
+    params,
+    responseType: 'blob',
+  })
+
+  const siteLabel = site_location || 'All'
+  const today = new Date().toISOString().slice(0, 10).replace(/-/g, '')
+  const filename = `forecast_${forecast_year}_${siteLabel}_${today}.xlsx`
+
+  const url = window.URL.createObjectURL(new Blob([response.data]))
+  const link = document.createElement('a')
+  link.href = url
+  link.setAttribute('download', filename)
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  window.URL.revokeObjectURL(url)
+}

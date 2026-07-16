@@ -1,6 +1,6 @@
 import io
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, date
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session, joinedload
@@ -14,6 +14,7 @@ from app.database import get_db
 from app.models.fixed_asset import FixedAsset
 from app.models.depreciation_monthly import DepreciationMonthly
 from app.models.acquisition_disposal import AcquisitionDisposal
+from app.models.planned_asset import PlannedAsset
 
 router = APIRouter(prefix="/export", tags=["export"])
 
@@ -359,6 +360,371 @@ def export_excel(
 
     site_label = site_location or "All"
     filename = f"depreciation_{year_ref}_{site_label}_{datetime.now().strftime('%Y%m%d')}.xlsx"
+
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+# ── Forecast export helpers ────────────────────────────────────────────────────
+
+def _months_elapsed_fc(purchase_date: date, target_year: int, target_month: int) -> int:
+    sy, sm = purchase_date.year, purchase_date.month
+    return max(0, (target_year - sy) * 12 + (target_month - sm) + 1)
+
+
+def _calc_planned_fc(asset: PlannedAsset, forecast_year: int):
+    if not asset.purchase_price or not asset.depreciation_period_total:
+        return None
+    price = float(asset.purchase_price)
+    period = int(asset.depreciation_period_total)
+    if period <= 0:
+        return None
+    monthly = price / period
+    pd = date(asset.planned_purchase_year, asset.planned_purchase_month, 1)
+    prev_year = forecast_year - 1
+    acc_prev = min(_months_elapsed_fc(pd, prev_year, 12), period)
+    acc_curr = min(_months_elapsed_fc(pd, forecast_year, 12), period)
+    yearly = max(0, acc_curr - acc_prev)
+    month_amounts = []
+    for m in range(1, 13):
+        elapsed = _months_elapsed_fc(pd, forecast_year, m)
+        month_amounts.append(monthly if 0 < elapsed <= period else 0.0)
+    total_year = sum(month_amounts)
+    return {
+        "name": asset.name,
+        "group_name": asset.group_name or "",
+        "category": asset.category or "",
+        "site_location": asset.site_location or "",
+        "job": asset.job or "",
+        "purchase_price": price,
+        "period": period,
+        "purchase_month": asset.planned_purchase_month,
+        "purchase_year": asset.planned_purchase_year,
+        "monthly_dep": monthly,
+        "yearly_dep": total_year,
+        "nbv_curr": max(0.0, price - monthly * acc_curr),
+        "months": month_amounts,
+        "job_key": asset.job or "UNKNOWN",
+        "group_key": asset.group_name or "Unknown",
+        "category_key": asset.category or "UNKNOWN",
+    }
+
+
+def _calc_existing_fc(asset: FixedAsset, forecast_year: int):
+    if not asset.purchase_price or not asset.depreciation_period_total:
+        return None
+    price = float(asset.purchase_price)
+    period = int(asset.depreciation_period_total)
+    if period <= 0:
+        return None
+    monthly = price / period
+    prev_year = forecast_year - 1
+    if asset.purchase_date:
+        acc_prev = min(_months_elapsed_fc(asset.purchase_date, prev_year, 12), period)
+        acc_curr = min(_months_elapsed_fc(asset.purchase_date, forecast_year, 12), period)
+    else:
+        acc_prev = acc_curr = 0
+    month_amounts = []
+    for m in range(1, 13):
+        if asset.purchase_date:
+            elapsed = _months_elapsed_fc(asset.purchase_date, forecast_year, m)
+            month_amounts.append(monthly if 0 < elapsed <= period else 0.0)
+        else:
+            month_amounts.append(0.0)
+    return {
+        "job_key": asset.job or "UNKNOWN",
+        "group_key": asset.group_name or "Unknown",
+        "category_key": asset.category or "UNKNOWN",
+        "months": month_amounts,
+        "yearly_dep": sum(month_amounts),
+        "purchase_price": price,
+        "acc_dep": monthly * acc_curr,
+        "nbv_curr": max(0.0, price - monthly * acc_curr),
+    }
+
+
+def build_forecast_planned(wb: Workbook, planned: list, forecast_year: int):
+    ws = wb.create_sheet("Planned Assets")
+    ws.sheet_properties.tabColor = "C05621"
+    ws.freeze_panes = "A2"
+    headers = [
+        "Name", "Group", "Category", "Site", "Job",
+        "Purchase Price", "Period (mo)", "Purchase Month", "Purchase Year",
+        "Monthly Dep.",
+        *[f"{m} {forecast_year}" for m in MONTHS],
+        f"Total Dep. {forecast_year}", "NBV Projected",
+    ]
+    apply_header(ws, 1, headers, "C05621")
+    num_cols = {6, 10, *range(11, 25), 24, 25}
+
+    for ri, asset in enumerate(planned, start=2):
+        fc = _calc_planned_fc(asset, forecast_year)
+        if not fc:
+            continue
+        row_fill = "FFF7ED" if ri % 2 == 0 else None
+        month_names = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                       "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+        values = [
+            fc["name"], fc["group_name"], fc["category"],
+            fc["site_location"], fc["job"],
+            fc["purchase_price"], fc["period"],
+            month_names[fc["purchase_month"] - 1], fc["purchase_year"],
+            fc["monthly_dep"],
+            *fc["months"],
+            fc["yearly_dep"], fc["nbv_curr"],
+        ]
+        apply_row(ws, ri, values, row_fill, num_cols)
+
+    # Footer totals
+    if planned:
+        total_row = len([p for p in planned if _calc_planned_fc(p, forecast_year)]) + 2
+        fcs = [_calc_planned_fc(p, forecast_year) for p in planned if _calc_planned_fc(p, forecast_year)]
+        total_vals = [
+            f"TOTAL ({len(fcs)} planned assets)", "", "", "", "",
+            sum(f["purchase_price"] for f in fcs), "", "", "",
+            sum(f["monthly_dep"] for f in fcs),
+            *[sum(f["months"][i] for f in fcs) for i in range(12)],
+            sum(f["yearly_dep"] for f in fcs),
+            sum(f["nbv_curr"] for f in fcs),
+        ]
+        apply_header(ws, total_row, total_vals, "C05621")
+        for ci in num_cols:
+            ws.cell(row=total_row, column=ci).number_format = '#,##0'
+            ws.cell(row=total_row, column=ci).alignment = Alignment(horizontal="right")
+
+    auto_col_width(ws)
+
+
+def build_forecast_monthly(wb: Workbook, existing: list, planned: list, forecast_year: int):
+    ws = wb.create_sheet("Forecast Monthly")
+    ws.sheet_properties.tabColor = "1E3A8A"
+    ws.freeze_panes = "B2"
+
+    # Build per-job aggregation
+    job_existing: dict = {}
+    for asset in existing:
+        fc = _calc_existing_fc(asset, forecast_year)
+        if not fc:
+            continue
+        key = fc["job_key"]
+        if key not in job_existing:
+            job_existing[key] = [0.0] * 12
+        for i in range(12):
+            job_existing[key][i] += fc["months"][i]
+
+    job_planned: dict = {}
+    for asset in planned:
+        fc = _calc_planned_fc(asset, forecast_year)
+        if not fc:
+            continue
+        key = fc["job_key"]
+        if key not in job_planned:
+            job_planned[key] = [0.0] * 12
+        for i in range(12):
+            job_planned[key][i] += fc["months"][i]
+
+    all_jobs = sorted(set(list(job_existing.keys()) + list(job_planned.keys())))
+
+    headers = ["Job / Category"] + MONTHS + ["Total/Year"]
+    apply_header(ws, 1, headers, "1E3A8A")
+    num_cols = set(range(2, 15))
+
+    ri = 2
+    for job in all_jobs:
+        ex = job_existing.get(job, [0.0] * 12)
+        pl = job_planned.get(job, [0.0] * 12)
+        combined = [ex[i] + pl[i] for i in range(12)]
+        row_fill = "EFF6FF" if ri % 2 == 0 else None
+        values = [job] + combined + [sum(combined)]
+        apply_row(ws, ri, values, row_fill, num_cols)
+        ri += 1
+        # Sub-rows if there are planned amounts
+        if any(pl):
+            apply_row(ws, ri, [f"  ↳ {job} (planned)"] + pl + [sum(pl)], "FFF7ED", num_cols)
+            ri += 1
+
+    # Grand total
+    grand_ex = [sum(job_existing.get(j, [0.0]*12)[i] for j in all_jobs) for i in range(12)]
+    grand_pl = [sum(job_planned.get(j, [0.0]*12)[i] for j in all_jobs) for i in range(12)]
+    grand_total = [grand_ex[i] + grand_pl[i] for i in range(12)]
+    apply_header(ws, ri, ["GRAND TOTAL"] + grand_total + [sum(grand_total)], "1E3A8A")
+
+    auto_col_width(ws)
+
+
+def build_forecast_by_group(wb: Workbook, existing: list, planned: list, forecast_year: int):
+    ws = wb.create_sheet("Forecast by Group")
+    ws.sheet_properties.tabColor = "374151"
+    ws.freeze_panes = "A2"
+
+    headers = [
+        "Asset Group",
+        "Existing Assets", "Planned Assets",
+        f"Existing Yearly Dep. {forecast_year}",
+        f"Planned Yearly Dep. {forecast_year}",
+        f"Total Yearly Dep. {forecast_year}",
+        "Purchase Price (Existing)", "Acc. Dep.", "NBV Projected",
+    ]
+    apply_header(ws, 1, headers, "374151")
+    num_cols = {4, 5, 6, 7, 8, 9}
+
+    group_ex: dict = {}
+    for asset in existing:
+        fc = _calc_existing_fc(asset, forecast_year)
+        if not fc:
+            continue
+        k = fc["group_key"]
+        if k not in group_ex:
+            group_ex[k] = {"count": 0, "yearly": 0.0, "price": 0.0, "acc": 0.0, "nbv": 0.0}
+        group_ex[k]["count"] += 1
+        group_ex[k]["yearly"] += fc["yearly_dep"]
+        group_ex[k]["price"] += fc["purchase_price"]
+        group_ex[k]["acc"] += fc["acc_dep"]
+        group_ex[k]["nbv"] += fc["nbv_curr"]
+
+    group_pl: dict = {}
+    for asset in planned:
+        fc = _calc_planned_fc(asset, forecast_year)
+        if not fc:
+            continue
+        k = fc["group_key"]
+        if k not in group_pl:
+            group_pl[k] = {"count": 0, "yearly": 0.0}
+        group_pl[k]["count"] += 1
+        group_pl[k]["yearly"] += fc["yearly_dep"]
+
+    all_groups = sorted(set(list(group_ex.keys()) + list(group_pl.keys())))
+    totals = [0, 0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+
+    for ri, grp in enumerate(all_groups, start=2):
+        ex = group_ex.get(grp, {"count": 0, "yearly": 0.0, "price": 0.0, "acc": 0.0, "nbv": 0.0})
+        pl = group_pl.get(grp, {"count": 0, "yearly": 0.0})
+        row_fill = "F9FAFB" if ri % 2 == 0 else None
+        total_dep = ex["yearly"] + pl["yearly"]
+        values = [grp, ex["count"], pl["count"], ex["yearly"], pl["yearly"], total_dep,
+                  ex["price"], ex["acc"], ex["nbv"]]
+        apply_row(ws, ri, values, row_fill, num_cols)
+        for i, v in enumerate([ex["count"], pl["count"], ex["yearly"], pl["yearly"], total_dep,
+                                ex["price"], ex["acc"], ex["nbv"]]):
+            totals[i] += v
+
+    total_row = len(all_groups) + 2
+    total_vals = ["TOTAL"] + totals
+    apply_header(ws, total_row, total_vals, "374151")
+    for ci in num_cols:
+        ws.cell(row=total_row, column=ci).number_format = '#,##0'
+        ws.cell(row=total_row, column=ci).alignment = Alignment(horizontal="right")
+
+    auto_col_width(ws)
+
+
+def build_forecast_by_category(wb: Workbook, existing: list, planned: list, forecast_year: int):
+    ws = wb.create_sheet("Forecast by Category")
+    ws.sheet_properties.tabColor = "0F4C81"
+    ws.freeze_panes = "A2"
+
+    headers = [
+        "Category",
+        "Existing Assets", "Planned Assets",
+        f"Existing Yearly Dep. {forecast_year}",
+        f"Planned Yearly Dep. {forecast_year}",
+        f"Total Yearly Dep. {forecast_year}",
+        "% of Total",
+    ]
+    apply_header(ws, 1, headers, "0F4C81")
+    num_cols = {4, 5, 6}
+
+    cat_ex: dict = {}
+    for asset in existing:
+        fc = _calc_existing_fc(asset, forecast_year)
+        if not fc:
+            continue
+        k = fc["category_key"]
+        if k not in cat_ex:
+            cat_ex[k] = {"count": 0, "yearly": 0.0}
+        cat_ex[k]["count"] += 1
+        cat_ex[k]["yearly"] += fc["yearly_dep"]
+
+    cat_pl: dict = {}
+    for asset in planned:
+        fc = _calc_planned_fc(asset, forecast_year)
+        if not fc:
+            continue
+        k = fc["category_key"]
+        if k not in cat_pl:
+            cat_pl[k] = {"count": 0, "yearly": 0.0}
+        cat_pl[k]["count"] += 1
+        cat_pl[k]["yearly"] += fc["yearly_dep"]
+
+    all_cats = sorted(set(list(cat_ex.keys()) + list(cat_pl.keys())))
+    grand_total = sum((cat_ex.get(c, {}).get("yearly", 0.0) + cat_pl.get(c, {}).get("yearly", 0.0))
+                      for c in all_cats)
+
+    for ri, cat in enumerate(sorted(all_cats, key=lambda c: -(
+        cat_ex.get(c, {}).get("yearly", 0.0) + cat_pl.get(c, {}).get("yearly", 0.0)
+    )), start=2):
+        ex = cat_ex.get(cat, {"count": 0, "yearly": 0.0})
+        pl = cat_pl.get(cat, {"count": 0, "yearly": 0.0})
+        total_dep = ex["yearly"] + pl["yearly"]
+        pct = round(total_dep / grand_total * 100, 2) if grand_total > 0 else 0.0
+        row_fill = "EFF6FF" if ri % 2 == 0 else None
+        values = [cat, ex["count"], pl["count"], ex["yearly"], pl["yearly"], total_dep, pct]
+        apply_row(ws, ri, values, row_fill, num_cols)
+        ws.cell(row=ri, column=7).number_format = '0.00"%"'
+        ws.cell(row=ri, column=7).alignment = Alignment(horizontal="right")
+
+    total_row = len(all_cats) + 2
+    total_vals = [
+        "TOTAL",
+        sum(cat_ex.get(c, {}).get("count", 0) for c in all_cats),
+        sum(cat_pl.get(c, {}).get("count", 0) for c in all_cats),
+        sum(cat_ex.get(c, {}).get("yearly", 0.0) for c in all_cats),
+        sum(cat_pl.get(c, {}).get("yearly", 0.0) for c in all_cats),
+        grand_total, "100%",
+    ]
+    apply_header(ws, total_row, total_vals, "0F4C81")
+    for ci in num_cols:
+        ws.cell(row=total_row, column=ci).number_format = '#,##0'
+        ws.cell(row=total_row, column=ci).alignment = Alignment(horizontal="right")
+
+    auto_col_width(ws)
+
+
+@router.get("/forecast-excel")
+def export_forecast_excel(
+    forecast_year: int = Query(2027, ge=2026),
+    site_location: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    """Generate and download a multi-sheet forecast Excel file."""
+    from app.routers.forecast import get_planned_assets
+
+    # Fetch existing assets (base year 2026)
+    q = db.query(FixedAsset).filter(FixedAsset.year_ref == 2026)
+    if site_location:
+        q = q.filter(FixedAsset.site_location == site_location)
+    existing = q.all()
+
+    # Fetch planned assets (covers forecast_year)
+    planned = get_planned_assets(db, forecast_year, site_location)
+
+    wb = Workbook()
+    wb.remove(wb.active)
+
+    build_forecast_planned(wb, planned, forecast_year)
+    build_forecast_monthly(wb, existing, planned, forecast_year)
+    build_forecast_by_group(wb, existing, planned, forecast_year)
+    build_forecast_by_category(wb, existing, planned, forecast_year)
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    site_label = site_location or "All"
+    filename = f"forecast_{forecast_year}_{site_label}_{datetime.now().strftime('%Y%m%d')}.xlsx"
 
     return StreamingResponse(
         buf,
