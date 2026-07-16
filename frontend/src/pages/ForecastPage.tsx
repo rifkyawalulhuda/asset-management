@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   fetchForecastTotals,
@@ -7,6 +7,7 @@ import {
   fetchForecastByCategory,
   fetchForecastAssets,
   fetchSiteLocations,
+  fetchJobs,
   fetchPlannedAssets,
   createPlannedAsset,
   updatePlannedAsset,
@@ -31,7 +32,6 @@ interface PlannedAsset {
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 const MONTH_KEYS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec']
-const FORECAST_YEARS = [2027, 2028, 2029, 2030]
 
 export default function ForecastPage() {
   const [year, setYear] = useState(2027)
@@ -45,6 +45,8 @@ export default function ForecastPage() {
   const [includePlanned, setIncludePlanned] = useState(false)
   const [showPlannedForm, setShowPlannedForm] = useState(false)
   const [editingPlanned, setEditingPlanned] = useState<PlannedAsset | null>(null)
+  const [siteSearch, setSiteSearch] = useState('')
+  const [showSiteDropdown, setShowSiteDropdown] = useState(false)
   const [plannedForm, setPlannedForm] = useState({
     name: '',
     group_name: '',
@@ -64,6 +66,43 @@ export default function ForecastPage() {
     queryFn: () => fetchSiteLocations(2026),
     staleTime: 60000,
   })
+
+  // Jobs dependent on selected site in form
+  const { data: jobOptions = [] } = useQuery({
+    queryKey: ['jobs', plannedForm.site_location],
+    queryFn: () => fetchJobs(plannedForm.site_location || undefined, 2026),
+    enabled: true,
+    staleTime: 60000,
+  })
+
+  // Fetch ALL planned assets (no filter) to calculate dynamic year range
+  const { data: allPlannedAssets = [] } = useQuery({
+    queryKey: ['planned-assets-all'],
+    queryFn: () => fetchPlannedAssets(),
+    staleTime: 30000,
+  })
+
+  // Dynamic forecast years based on planned assets depreciation end dates
+  const forecastYears = useMemo(() => {
+    const baseMin = 2027
+    let maxYear = 2030
+    for (const asset of allPlannedAssets as PlannedAsset[]) {
+      if (asset.purchase_price && asset.depreciation_period_total) {
+        const endYear = asset.planned_purchase_year + Math.ceil(asset.depreciation_period_total / 12)
+        maxYear = Math.max(maxYear, endYear)
+      }
+    }
+    const years: number[] = []
+    for (let y = baseMin; y <= maxYear; y++) years.push(y)
+    return years
+  }, [allPlannedAssets])
+
+  // Reset year if it falls outside the new dynamic range
+  useEffect(() => {
+    if (forecastYears.length > 0 && !forecastYears.includes(year)) {
+      setYear(forecastYears[0])
+    }
+  }, [forecastYears])
 
   const { data: totals, isLoading: loadingTotals } = useQuery({
     queryKey: ['forecast-totals', year, site, includePlanned],
@@ -247,7 +286,7 @@ export default function ForecastPage() {
         <div className="flex gap-2 items-center flex-wrap">
           <label className="text-xs text-gray-500">Forecast Year:</label>
           <select value={year} onChange={e => { setYear(Number(e.target.value)); setPage(1) }} className="border rounded px-2 py-1 text-sm font-medium">
-            {FORECAST_YEARS.map(y => <option key={y} value={y}>{y}</option>)}
+            {forecastYears.map(y => <option key={y} value={y}>{y}</option>)}
           </select>
           <label className="text-xs text-gray-500 ml-2">Site/Location:</label>
           <select value={site || ''} onChange={e => { setSite(e.target.value || undefined); setPage(1) }} className="border rounded px-2 py-1 text-sm">
@@ -364,25 +403,58 @@ export default function ForecastPage() {
                       ))}
                     </select>
                   </div>
-                  <div>
+                  <div className="relative">
                     <label className="block text-xs text-gray-600 mb-1">Site</label>
                     <input
                       type="text"
-                      value={plannedForm.site_location}
-                      onChange={e => setPlannedForm(f => ({ ...f, site_location: e.target.value }))}
-                      placeholder="e.g. CLC"
+                      value={siteSearch || plannedForm.site_location}
+                      onChange={e => {
+                        setSiteSearch(e.target.value)
+                        setShowSiteDropdown(true)
+                        setPlannedForm(f => ({ ...f, site_location: e.target.value, job: '' }))
+                      }}
+                      onFocus={() => setShowSiteDropdown(true)}
+                      onBlur={() => setTimeout(() => setShowSiteDropdown(false), 150)}
+                      placeholder="Search site..."
                       className="w-full border border-gray-300 rounded-md px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
                     />
+                    {showSiteDropdown && (
+                      <div className="absolute z-50 mt-0.5 w-full bg-white border border-gray-200 rounded-md shadow-lg max-h-40 overflow-y-auto">
+                        {(siteLocations || [])
+                          .filter(s => !plannedForm.site_location || s.site_location.toLowerCase().includes((siteSearch || plannedForm.site_location).toLowerCase()))
+                          .map(s => (
+                            <div
+                              key={s.site_location}
+                              onMouseDown={() => {
+                                setPlannedForm(f => ({ ...f, site_location: s.site_location, job: '' }))
+                                setSiteSearch('')
+                                setShowSiteDropdown(false)
+                              }}
+                              className="px-3 py-1.5 text-xs hover:bg-blue-50 cursor-pointer flex justify-between items-center"
+                            >
+                              <span className="font-medium">{s.site_location}</span>
+                              <span className="text-gray-400 text-[10px]">{s.count} assets</span>
+                            </div>
+                          ))}
+                        {(siteLocations || []).filter(s => s.site_location.toLowerCase().includes((siteSearch || '').toLowerCase())).length === 0 && (
+                          <div className="px-3 py-2 text-xs text-gray-400">No sites found</div>
+                        )}
+                      </div>
+                    )}
                   </div>
                   <div>
                     <label className="block text-xs text-gray-600 mb-1">Job</label>
-                    <input
-                      type="text"
+                    <select
                       value={plannedForm.job}
                       onChange={e => setPlannedForm(f => ({ ...f, job: e.target.value }))}
-                      placeholder="e.g. CLCWH"
-                      className="w-full border border-gray-300 rounded-md px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
+                      disabled={!plannedForm.site_location}
+                      className="w-full border border-gray-300 rounded-md px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-50 disabled:text-gray-400 disabled:cursor-not-allowed"
+                    >
+                      <option value="">{plannedForm.site_location ? 'Select job...' : 'Select site first'}</option>
+                      {(jobOptions as { job: string; count: number }[]).map(j => (
+                        <option key={j.job} value={j.job}>{j.job} ({j.count})</option>
+                      ))}
+                    </select>
                   </div>
                   <div>
                     <label className="block text-xs text-gray-600 mb-1">Purchase Price (IDR) *</label>

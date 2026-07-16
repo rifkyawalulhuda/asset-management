@@ -81,6 +81,14 @@ export const fetchSiteLocations = async (year_ref?: number): Promise<{ site_loca
   return data
 }
 
+export const fetchJobs = async (site_location?: string, year_ref?: number): Promise<{ job: string; count: number }[]> => {
+  const params: Record<string, unknown> = {}
+  if (site_location) params.site_location = site_location
+  if (year_ref) params.year_ref = year_ref
+  const { data } = await api.get('/summary/jobs', { params })
+  return data
+}
+
 // Import Excel
 export const importExcel = async (file: File) => {
   const formData = new FormData()

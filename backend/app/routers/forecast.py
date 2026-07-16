@@ -156,8 +156,32 @@ def get_assets(db: Session, site_location: Optional[str], year_ref: int = 2026) 
 
 
 def get_planned_assets(db: Session, forecast_year: int, site_location: Optional[str]) -> List[PlannedAsset]:
-    """Fetch planned assets for the given forecast year."""
-    q = db.query(PlannedAsset).filter(PlannedAsset.forecast_year == forecast_year)
+    """
+    Fetch planned assets whose depreciation period covers the given forecast_year.
+
+    An asset is included if:
+    1. Its purchase has started on or before the end of forecast_year
+       (planned_purchase_year <= forecast_year)
+    2. Its depreciation is not yet exhausted at the start of forecast_year
+       i.e. months from purchase to Jan 1 of forecast_year < depreciation_period_total
+       i.e. (forecast_year - planned_purchase_year) * 12 + (1 - planned_purchase_month) + 1
+            <= depreciation_period_total
+       simplified: (forecast_year - planned_purchase_year) * 12 - planned_purchase_month + 2
+                   <= depreciation_period_total
+    """
+    from sqlalchemy import and_
+    q = db.query(PlannedAsset).filter(
+        # Must have started by end of forecast_year
+        PlannedAsset.planned_purchase_year <= forecast_year,
+        # Depreciation must not be fully exhausted before forecast_year starts
+        # months_elapsed to Dec of (forecast_year-1) = (forecast_year-1 - purchase_year)*12 + (12 - purchase_month) + 1
+        # = (forecast_year - purchase_year)*12 - purchase_month + 1
+        # asset still active if this value < depreciation_period_total
+        PlannedAsset.depreciation_period_total > (
+            (forecast_year - PlannedAsset.planned_purchase_year) * 12
+            - PlannedAsset.planned_purchase_month + 1
+        )
+    )
     if site_location:
         q = q.filter(PlannedAsset.site_location == site_location)
     return q.all()

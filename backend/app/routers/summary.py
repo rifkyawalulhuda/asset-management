@@ -196,3 +196,27 @@ def get_site_locations(year_ref: Optional[int] = None, db: Session = Depends(get
         .all()
     )
     return [{"site_location": r.site_location, "count": r.count} for r in rows]
+
+
+@router.get("/jobs")
+def get_jobs(
+    year_ref: Optional[int] = None,
+    site_location: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    """Returns distinct job values with asset count, optionally filtered by site_location."""
+    query = db.query(
+        FixedAsset.job,
+        func.count(FixedAsset.id).label("count"),
+    ).filter(FixedAsset.job.isnot(None))
+    if year_ref:
+        query = query.filter(FixedAsset.year_ref == year_ref)
+    if site_location:
+        query = query.filter(FixedAsset.site_location == site_location)
+    rows = (
+        query
+        .group_by(FixedAsset.job)
+        .order_by(func.count(FixedAsset.id).desc())
+        .all()
+    )
+    return [{"job": r.job, "count": r.count} for r in rows]
