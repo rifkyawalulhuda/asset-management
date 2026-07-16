@@ -459,12 +459,23 @@ export default function ForecastPage() {
                   <div>
                     <label className="block text-xs text-gray-600 mb-1">Purchase Price (IDR) *</label>
                     <input
-                      type="number"
-                      value={plannedForm.purchase_price}
-                      onChange={e => setPlannedForm(f => ({ ...f, purchase_price: e.target.value }))}
-                      placeholder="e.g. 150000000"
+                      type="text"
+                      inputMode="numeric"
+                      value={plannedForm.purchase_price
+                        ? new Intl.NumberFormat('id-ID').format(Number(plannedForm.purchase_price))
+                        : ''}
+                      onChange={e => {
+                        const raw = e.target.value.replace(/\D/g, '')
+                        setPlannedForm(f => ({ ...f, purchase_price: raw }))
+                      }}
+                      placeholder="e.g. 150.000.000"
                       className="w-full border border-gray-300 rounded-md px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
                     />
+                    {plannedForm.purchase_price && (
+                      <p className="text-[10px] text-blue-600 mt-0.5">
+                        Rp {new Intl.NumberFormat('id-ID').format(Number(plannedForm.purchase_price))}
+                      </p>
+                    )}
                   </div>
                   <div>
                     <label className="block text-xs text-gray-600 mb-1">Depreciation Period (months) *</label>
