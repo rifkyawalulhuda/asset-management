@@ -159,7 +159,7 @@ def build_col_map(header_row: tuple, sub_row: tuple) -> dict:
             col_map['account_no'] = i
         elif h1 == 'category':
             col_map['category'] = i
-        elif h1 == 'asset' and h2 == 'no.':
+        elif h1 == 'asset' and h2 == 'no.' and 'asset_no' not in col_map:
             col_map['asset_no'] = i
         elif h1 == 'fixed asset number' and h2 == 'ax':
             col_map['fixed_asset_number_ax'] = i
@@ -430,51 +430,95 @@ def import_fa_sheet(ws, year_ref: int, db: Session) -> int:
 
 
 def import_approval_sheet(ws, year_ref: int, db: Session) -> int:
-    """Import acquisition/disposal records."""
+    """Import acquisition/disposal records from 'List Approval' sheet.
+
+    Actual column layout (0-indexed) — confirmed from Fixed Asset_202606_1.xlsx:
+      0:  No.
+      1:  Site
+      2:  Job
+      3:  Fixed Asset Number AX
+      4:  Asset No. (internal, e.g. CLC-A-002)
+      5:  Application No (e.g. 001/ASC/FA-Disp/I/2025)
+      6:  (empty / sub-number)
+      7:  (empty / sub-number)
+      8:  Remark / Date (secondary date — used as transaction_date if col9 absent)
+      9:  Purchase / Disposed Date (primary date)
+      10: Bookslip No.
+      11: Name of Fixed Asset
+      12: Purchase / Disposal Price
+      13: Status — Acquisition column (value: 'Acquisition' or None)
+      14: Status — Disposals column (value: 'Disposal'/'Disposals' or None)
+      15: Vendor / Customer
+    """
     count = 0
-    # Find header row
-    for start_row in range(1, 15):
-        row = list(ws.iter_rows(min_row=start_row, max_row=start_row, values_only=True))[0]
+
+    # Find header row — look for 'site' and 'job' keywords
+    data_start = 7  # safe default
+    for r in range(1, 15):
+        row = list(ws.iter_rows(min_row=r, max_row=r, values_only=True))[0]
         texts = [str(v).strip().lower() for v in row if v]
-        if 'no.' in texts and ('site' in texts or 'job' in texts):
-            start_row += 1
+        if 'site' in texts and 'job' in texts:
+            data_start = r + 2  # skip header row + one blank row
             break
 
-    for row in ws.iter_rows(min_row=start_row, values_only=True):
-        if row[0] is None or not isinstance(row[0], (int, float)):
+    for row in ws.iter_rows(min_row=data_start, values_only=True):
+        # Skip rows with no data
+        if not row or len(row) < 4:
+            continue
+        # Row must have a non-empty site or job to be a valid data row
+        site = to_str(row[1]) if len(row) > 1 else None
+        job = to_str(row[2]) if len(row) > 2 else None
+        if not site and not job:
             continue
 
-        asset_name = to_str(row[9]) if len(row) > 9 else None
-        if not asset_name:
+        fixed_asset_no_ax = to_str(row[3]) if len(row) > 3 else None
+        application = to_str(row[5]) if len(row) > 5 else None
+
+        # col 9 = Purchase/Disposed Date (primary), col 8 = Remark date (fallback)
+        transaction_date = to_date(row[9]) if len(row) > 9 else None
+        if transaction_date is None:
+            transaction_date = to_date(row[8]) if len(row) > 8 else None
+
+        bookslip_no = to_str(row[10]) if len(row) > 10 else None
+        asset_name = to_str(row[11]) if len(row) > 11 else None
+        price = to_decimal(row[12]) if len(row) > 12 else None
+
+        # Status: col 13 = 'Acquisition', col 14 = 'Disposal'/'Disposals'
+        status_acq = to_str(row[13]) if len(row) > 13 else None
+        status_dis = to_str(row[14]) if len(row) > 14 else None
+        status = status_acq or status_dis
+
+        # col 15 = Vendor/Customer
+        vendor_customer = to_str(row[15]) if len(row) > 15 else None
+
+        if not asset_name and not fixed_asset_no_ax:
             continue
 
-        fixed_asset_no = to_str(row[5]) if len(row) > 5 else None
-
-        # Try to find linked asset
+        # Try to find linked asset by AX number first, then asset_no
         asset_id = None
-        if fixed_asset_no:
+        if fixed_asset_no_ax:
             asset = db.query(FixedAsset).filter(
-                FixedAsset.asset_no == fixed_asset_no
+                FixedAsset.fixed_asset_number_ax == fixed_asset_no_ax
             ).first()
             if not asset:
                 asset = db.query(FixedAsset).filter(
-                    FixedAsset.fixed_asset_number_ax == fixed_asset_no
+                    FixedAsset.asset_no == fixed_asset_no_ax
                 ).first()
             if asset:
                 asset_id = asset.id
 
         record = AcquisitionDisposal(
             asset_id=asset_id,
-            site=to_str(row[1]) if len(row) > 1 else None,
-            job=to_str(row[2]) if len(row) > 2 else None,
-            fixed_asset_no=fixed_asset_no,
-            application=to_str(row[6]) if len(row) > 6 else None,
-            transaction_date=to_date(row[7]) if len(row) > 7 else None,
-            bookslip_no=to_str(row[8]) if len(row) > 8 else None,
+            site=site,
+            job=job,
+            fixed_asset_no=fixed_asset_no_ax,
+            application=application,
+            transaction_date=transaction_date,
+            bookslip_no=bookslip_no,
             asset_name=asset_name,
-            price=to_decimal(row[10]) if len(row) > 10 else None,
-            status=to_str(row[11]) if len(row) > 11 else None,
-            vendor_customer=to_str(row[13]) if len(row) > 13 else None,
+            price=price,
+            status=status,
+            vendor_customer=vendor_customer,
             year_ref=year_ref,
         )
         db.add(record)
