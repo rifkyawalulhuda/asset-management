@@ -1,3 +1,23 @@
+/**
+ * Parses a `YYYY-MM-DD` value as a local calendar date.
+ *
+ * `new Date('2024-01-01')` is parsed as UTC midnight and then read back with
+ * local getters, so west of Greenwich the month shifts back by one and the
+ * preview disagreed with the server by a whole month. The date parts are read
+ * directly instead.
+ */
+export function parseCalendarDate(value: string | null | undefined): Date | null {
+  if (!value) return null
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value.trim())
+  if (!match) {
+    const fallback = new Date(value)
+    return Number.isNaN(fallback.getTime()) ? null : fallback
+  }
+  const [, year, month, day] = match
+  const date = new Date(Number(year), Number(month) - 1, Number(day))
+  return Number.isNaN(date.getTime()) ? null : date
+}
+
 /** months elapsed from purchase_date up to end of target_month/year (inclusive) */
 export function monthsElapsed(purchaseDate: Date, targetYear: number, targetMonth: number): number {
   const startYear = purchaseDate.getFullYear()
@@ -41,8 +61,8 @@ export function calcDepreciation(
   let remain = 0
 
   if (purchaseDateStr) {
-    const purchaseDate = new Date(purchaseDateStr)
-    if (!Number.isNaN(purchaseDate.getTime())) {
+    const purchaseDate = parseCalendarDate(purchaseDateStr)
+    if (purchaseDate) {
       const previousYear = yearRef - 1
       const upToPrevious = Math.min(monthsElapsed(purchaseDate, previousYear, 12), periodTotal)
       const upToCurrent = Math.min(monthsElapsed(purchaseDate, yearRef, 12), periodTotal)

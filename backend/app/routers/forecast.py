@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.fixed_asset import FixedAsset
 from app.models.planned_asset import PlannedAsset
-from app.services.depreciation import months_elapsed
+from app.services.depreciation import build_schedule
 
 router = APIRouter(prefix="/forecast", tags=["forecast"])
 
@@ -33,39 +33,19 @@ def is_non_depreciable(asset: FixedAsset) -> bool:
 
 def calc_asset_forecast(asset: FixedAsset, forecast_year: int) -> Optional[Dict]:
     """Calculate forecasted depreciation for a single existing asset."""
-    if not asset.purchase_price or not asset.depreciation_period_total:
+    schedule = build_schedule(
+        asset.purchase_price,
+        asset.depreciation_period_total,
+        asset.purchase_date,
+        forecast_year,
+    )
+    if schedule is None:
         return None
 
     price = float(asset.purchase_price)
     period = int(asset.depreciation_period_total)
-    if period <= 0:
-        return None
-
-    monthly = price / period
-    prev_year = forecast_year - 1
-
-    if asset.purchase_date:
-        acc_prev = min(months_elapsed(asset.purchase_date, prev_year, 12), period)
-        acc_curr = min(months_elapsed(asset.purchase_date, forecast_year, 12), period)
-    else:
-        acc_prev = 0
-        acc_curr = 0
-
-    yearly = max(0, acc_curr - acc_prev)
-    remain = max(0, period - acc_curr)
-
-    month_amounts = []
-    for m in range(1, 13):
-        if asset.purchase_date:
-            elapsed = months_elapsed(asset.purchase_date, forecast_year, m)
-            active = 0 < elapsed <= period
-        else:
-            active = False
-        month_amounts.append(monthly if active else 0.0)
-
-    total_year = sum(month_amounts)
-    acc_dep_prev = monthly * acc_prev
-    acc_dep_curr = monthly * acc_curr
+    month_amounts = [float(amount) for amount in schedule.months]
+    total_year = float(schedule.dep_expense)
 
     return {
         "id": asset.id,
@@ -79,16 +59,16 @@ def calc_asset_forecast(asset: FixedAsset, forecast_year: int) -> Optional[Dict]
         "purchase_price": price,
         "purchase_date": str(asset.purchase_date) if asset.purchase_date else None,
         "depreciation_period_total": period,
-        "monthly_depreciation": monthly,
-        "dep_period_acc_prev_year": acc_prev,
-        "dep_period_yearly": yearly,
-        "dep_period_until_year": acc_curr,
-        "dep_period_remain": remain,
-        "acc_depreciation_prev": acc_dep_prev,
-        "nbv_prev": max(0.0, price - acc_dep_prev),
+        "monthly_depreciation": float(schedule.monthly),
+        "dep_period_acc_prev_year": schedule.acc_prev,
+        "dep_period_yearly": schedule.yearly,
+        "dep_period_until_year": schedule.acc_curr,
+        "dep_period_remain": schedule.remain,
+        "acc_depreciation_prev": float(schedule.acc_dep_prev),
+        "nbv_prev": float(schedule.nbv_prev),
         "dep_expense_current": total_year,
-        "acc_depreciation_curr": acc_dep_curr,
-        "nbv_curr": max(0.0, price - acc_dep_curr),
+        "acc_depreciation_curr": float(schedule.acc_dep_curr),
+        "nbv_curr": float(schedule.nbv_curr),
         "months": {MONTHS[i]: month_amounts[i] for i in range(12)},
         "total_year": total_year,
         "is_planned": False,
@@ -100,32 +80,22 @@ def calc_planned_forecast(asset: PlannedAsset, forecast_year: int) -> Optional[D
     if not asset.purchase_price or not asset.depreciation_period_total:
         return None
 
-    price = float(asset.purchase_price)
-    period = int(asset.depreciation_period_total)
-    if period <= 0:
+    # A planned purchase is known to the month, so the first of that month is
+    # used as the start date.
+    purchase_date = date(asset.planned_purchase_year, asset.planned_purchase_month, 1)
+    schedule = build_schedule(
+        asset.purchase_price,
+        asset.depreciation_period_total,
+        purchase_date,
+        forecast_year,
+    )
+    if schedule is None:
         return None
 
-    monthly = price / period
-    prev_year = forecast_year - 1
-
-    # Build purchase_date from month+year (use day=1)
-    purchase_date = date(asset.planned_purchase_year, asset.planned_purchase_month, 1)
-
-    acc_prev = min(months_elapsed(purchase_date, prev_year, 12), period)
-    acc_curr = min(months_elapsed(purchase_date, forecast_year, 12), period)
-
-    yearly = max(0, acc_curr - acc_prev)
-    remain = max(0, period - acc_curr)
-
-    month_amounts = []
-    for m in range(1, 13):
-        elapsed = months_elapsed(purchase_date, forecast_year, m)
-        active = 0 < elapsed <= period
-        month_amounts.append(monthly if active else 0.0)
-
-    total_year = sum(month_amounts)
-    acc_dep_prev = monthly * acc_prev
-    acc_dep_curr = monthly * acc_curr
+    price = float(asset.purchase_price)
+    period = int(asset.depreciation_period_total)
+    month_amounts = [float(amount) for amount in schedule.months]
+    total_year = float(schedule.dep_expense)
 
     return {
         "id": asset.id,
@@ -139,16 +109,16 @@ def calc_planned_forecast(asset: PlannedAsset, forecast_year: int) -> Optional[D
         "purchase_price": price,
         "purchase_date": str(purchase_date),
         "depreciation_period_total": period,
-        "monthly_depreciation": monthly,
-        "dep_period_acc_prev_year": acc_prev,
-        "dep_period_yearly": yearly,
-        "dep_period_until_year": acc_curr,
-        "dep_period_remain": remain,
-        "acc_depreciation_prev": acc_dep_prev,
-        "nbv_prev": max(0.0, price - acc_dep_prev),
+        "monthly_depreciation": float(schedule.monthly),
+        "dep_period_acc_prev_year": schedule.acc_prev,
+        "dep_period_yearly": schedule.yearly,
+        "dep_period_until_year": schedule.acc_curr,
+        "dep_period_remain": schedule.remain,
+        "acc_depreciation_prev": float(schedule.acc_dep_prev),
+        "nbv_prev": float(schedule.nbv_prev),
         "dep_expense_current": total_year,
-        "acc_depreciation_curr": acc_dep_curr,
-        "nbv_curr": max(0.0, price - acc_dep_curr),
+        "acc_depreciation_curr": float(schedule.acc_dep_curr),
+        "nbv_curr": float(schedule.nbv_curr),
         "months": {MONTHS[i]: month_amounts[i] for i in range(12)},
         "total_year": total_year,
         "is_planned": True,

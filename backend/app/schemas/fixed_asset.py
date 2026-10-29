@@ -1,7 +1,19 @@
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional, List
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
+
+
+def _clamp_non_negative(value: Optional[Decimal]) -> Optional[Decimal]:
+    """Net book value can never be negative.
+
+    Rounding the monthly amount to four decimals left a handful of assets a few
+    cents below zero; the write path already floors at zero, so the read path
+    does the same instead of showing a negative carrying value.
+    """
+    if value is None:
+        return None
+    return value if value >= 0 else Decimal("0")
 
 
 class DepreciationMonthlyResponse(BaseModel):
@@ -105,6 +117,11 @@ class FixedAssetResponse(FixedAssetBase):
     depreciation_monthly: List[DepreciationMonthlyResponse] = []
 
     model_config = {"from_attributes": True}
+
+    @field_validator("net_book_value_prev", "net_book_value_curr", mode="after")
+    @classmethod
+    def clamp_net_book_value(cls, value: Optional[Decimal]) -> Optional[Decimal]:
+        return _clamp_non_negative(value)
 
 
 class FixedAssetListResponse(BaseModel):

@@ -15,7 +15,7 @@ from app.models.fixed_asset import FixedAsset
 from app.models.depreciation_monthly import DepreciationMonthly
 from app.models.acquisition_disposal import AcquisitionDisposal
 from app.models.planned_asset import PlannedAsset
-from app.services.depreciation import months_elapsed as _months_elapsed_fc
+from app.services.depreciation import build_schedule
 
 router = APIRouter(prefix="/export", tags=["export"])
 
@@ -379,17 +379,10 @@ def _calc_planned_fc(asset: PlannedAsset, forecast_year: int):
     period = int(asset.depreciation_period_total)
     if period <= 0:
         return None
-    monthly = price / period
-    pd = date(asset.planned_purchase_year, asset.planned_purchase_month, 1)
-    prev_year = forecast_year - 1
-    acc_prev = min(_months_elapsed_fc(pd, prev_year, 12), period)
-    acc_curr = min(_months_elapsed_fc(pd, forecast_year, 12), period)
-    yearly = max(0, acc_curr - acc_prev)
-    month_amounts = []
-    for m in range(1, 13):
-        elapsed = _months_elapsed_fc(pd, forecast_year, m)
-        month_amounts.append(monthly if 0 < elapsed <= period else 0.0)
-    total_year = sum(month_amounts)
+    purchase_date = date(asset.planned_purchase_year, asset.planned_purchase_month, 1)
+    schedule = build_schedule(price, period, purchase_date, forecast_year)
+    if schedule is None:
+        return None
     return {
         "name": asset.name,
         "group_name": asset.group_name or "",
@@ -400,10 +393,10 @@ def _calc_planned_fc(asset: PlannedAsset, forecast_year: int):
         "period": period,
         "purchase_month": asset.planned_purchase_month,
         "purchase_year": asset.planned_purchase_year,
-        "monthly_dep": monthly,
-        "yearly_dep": total_year,
-        "nbv_curr": max(0.0, price - monthly * acc_curr),
-        "months": month_amounts,
+        "monthly_dep": float(schedule.monthly),
+        "yearly_dep": float(schedule.dep_expense),
+        "nbv_curr": float(schedule.nbv_curr),
+        "months": [float(amount) for amount in schedule.months],
         "job_key": asset.job or "UNKNOWN",
         "group_key": asset.group_name or "Unknown",
         "category_key": asset.category or "UNKNOWN",
@@ -411,35 +404,23 @@ def _calc_planned_fc(asset: PlannedAsset, forecast_year: int):
 
 
 def _calc_existing_fc(asset: FixedAsset, forecast_year: int):
-    if not asset.purchase_price or not asset.depreciation_period_total:
+    schedule = build_schedule(
+        asset.purchase_price,
+        asset.depreciation_period_total,
+        asset.purchase_date,
+        forecast_year,
+    )
+    if schedule is None:
         return None
-    price = float(asset.purchase_price)
-    period = int(asset.depreciation_period_total)
-    if period <= 0:
-        return None
-    monthly = price / period
-    prev_year = forecast_year - 1
-    if asset.purchase_date:
-        acc_prev = min(_months_elapsed_fc(asset.purchase_date, prev_year, 12), period)
-        acc_curr = min(_months_elapsed_fc(asset.purchase_date, forecast_year, 12), period)
-    else:
-        acc_prev = acc_curr = 0
-    month_amounts = []
-    for m in range(1, 13):
-        if asset.purchase_date:
-            elapsed = _months_elapsed_fc(asset.purchase_date, forecast_year, m)
-            month_amounts.append(monthly if 0 < elapsed <= period else 0.0)
-        else:
-            month_amounts.append(0.0)
     return {
         "job_key": asset.job or "UNKNOWN",
         "group_key": asset.group_name or "Unknown",
         "category_key": asset.category or "UNKNOWN",
-        "months": month_amounts,
-        "yearly_dep": sum(month_amounts),
-        "purchase_price": price,
-        "acc_dep": monthly * acc_curr,
-        "nbv_curr": max(0.0, price - monthly * acc_curr),
+        "months": [float(amount) for amount in schedule.months],
+        "yearly_dep": float(schedule.dep_expense),
+        "purchase_price": float(asset.purchase_price),
+        "acc_dep": float(schedule.acc_dep_curr),
+        "nbv_curr": float(schedule.nbv_curr),
     }
 
 
