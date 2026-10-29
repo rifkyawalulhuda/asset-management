@@ -18,6 +18,11 @@ from app.services.depreciation import recalculate_asset
 router = APIRouter(prefix="/assets", tags=["assets"])
 
 
+def split_values(raw: str) -> List[str]:
+    """Accepts a single value or a comma-separated list (used by the header filters)."""
+    return [part.strip() for part in raw.split(",") if part.strip()]
+
+
 def get_asset_by_key(key: str, db: Session) -> FixedAsset:
     """Lookup asset by fixed_asset_number_ax (e.g. BLD000048).
     Falls back to integer id for assets without an AX number."""
@@ -64,9 +69,9 @@ def list_assets(
     if group_name:
         query = query.filter(FixedAsset.group_name == group_name)
     if site_location:
-        query = query.filter(FixedAsset.site_location == site_location)
+        query = query.filter(FixedAsset.site_location.in_(split_values(site_location)))
     if job:
-        query = query.filter(FixedAsset.job == job)
+        query = query.filter(FixedAsset.job.in_(split_values(job)))
     if search:
         query = query.filter(
             or_(
