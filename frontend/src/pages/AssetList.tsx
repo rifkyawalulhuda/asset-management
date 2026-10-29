@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import type { PointerEvent as ReactPointerEvent, ReactNode } from 'react'
 import { fetchAssets, deleteAsset, fetchJobs, fetchSiteLocations } from '../services/assets'
 import { formatDate } from '../utils/format'
@@ -693,15 +693,56 @@ function Pane({
 
 /* ── Page ───────────────────────────────────────────────────────────────────── */
 
+/**
+ * Deep links from the Dashboard arrive as query params. They are read once on
+ * mount and then handed to the existing filter state, so the grid keeps working
+ * exactly as it does when a user picks the filters by hand.
+ */
+type UrlChip = { key: 'category' | 'group_name'; label: string; value: string }
+
+function readUrlFilters(params: URLSearchParams) {
+  const filters: AssetFilters = { page: 1, size: 100 }
+
+  const yearRef = Number(params.get('year_ref'))
+  filters.year_ref = Number.isFinite(yearRef) && yearRef > 0 ? yearRef : 2026
+
+  const category = params.get('category')
+  if (category) filters.category = category
+  const groupName = params.get('group_name')
+  if (groupName) filters.group_name = groupName
+
+  const columnFilters: Record<string, FilterValue> = {}
+  // "UNKNOWN" is a server-side sentinel (NULL lookup) and has no matching cell
+  // value, so it stays out of the client-side column filter.
+  const siteLocation = params.get('site_location')
+  if (siteLocation && siteLocation.toUpperCase() !== 'UNKNOWN') {
+    columnFilters.site_location = { kind: 'values', values: [siteLocation], text: '' }
+  }
+  const job = params.get('job')
+  if (job && job.toUpperCase() !== 'UNKNOWN') {
+    columnFilters.job = { kind: 'values', values: [job], text: '' }
+  }
+
+  // Category and group have no column filter, so they need their own chip row.
+  const chips: UrlChip[] = []
+  if (category) chips.push({ key: 'category', label: 'Category', value: category })
+  if (groupName) chips.push({ key: 'group_name', label: 'Group', value: groupName })
+
+  return { filters, columnFilters, chips }
+}
+
 export default function AssetList() {
   const qc = useQueryClient()
   const colRefs = useRef<Record<string, { pane: Pane; el: HTMLTableColElement }>>({})
+  const [searchParams] = useSearchParams()
+  const [urlSeed] = useState(() => readUrlFilters(searchParams))
 
-  const [filters, setFilters] = useState<AssetFilters>({ year_ref: 2026, page: 1, size: 100 })
+  const [filters, setFilters] = useState<AssetFilters>(urlSeed.filters)
   const [search, setSearch] = useState('')
   const [sortConfig, setSortConfig] = useState<SortState>(null)
   const [depFilter, setDepFilter] = useState<'all' | 'active' | 'completed'>('all')
-  const [columnFilters, setColumnFilters] = useState<Record<string, FilterValue>>({})
+  const [columnFilters, setColumnFilters] = useState<Record<string, FilterValue>>(urlSeed.columnFilters)
+  const [urlChips, setUrlChips] = useState<UrlChip[]>(urlSeed.chips)
   const [prefs, setPrefs] = useState<GridPrefs>(() => loadPrefs())
   const [views, setViews] = useState<SavedView[]>(() => loadViews())
   const [selected, setSelected] = useState<Set<number>>(() => new Set())
@@ -852,7 +893,17 @@ export default function AssetList() {
     setColumnFilters({})
     setDepFilter('all')
     setSearch('')
-    setFilters(current => ({ ...current, search: undefined, page: 1 }))
+    setUrlChips([])
+    setFilters(current => ({ ...current, search: undefined, category: undefined, group_name: undefined, page: 1 }))
+  }
+
+  const clearUrlChip = (key: UrlChip['key']) => {
+    setUrlChips(prev => prev.filter(chip => chip.key !== key))
+    setFilters(current => {
+      const next = { ...current, page: 1 }
+      delete next[key]
+      return next
+    })
   }
 
   const toggleHidden = (key: string) => {
@@ -974,6 +1025,30 @@ export default function AssetList() {
           </Link>
         </div>
       </div>
+
+      {/* Filters carried in from a Dashboard drill-down */}
+      {urlChips.length > 0 && (
+        <div className="mb-2 flex flex-wrap items-center gap-1.5">
+          <span className="text-[10.5px] text-slate-500">Filtered by</span>
+          {urlChips.map(chip => (
+            <span
+              key={chip.key}
+              className="inline-flex items-center gap-1 rounded border border-slate-300 bg-white px-1.5 py-[2px] text-[10.5px] text-slate-700"
+            >
+              <span className="text-slate-400">{chip.label}</span>
+              <span className="font-medium">{chip.value}</span>
+              <button
+                type="button"
+                onClick={() => clearUrlChip(chip.key)}
+                aria-label={`Remove ${chip.label} filter`}
+                className="ml-0.5 text-slate-400 hover:text-slate-700"
+              >
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
 
       {/* Toolbar */}
       <div className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1.5 rounded-md border border-slate-200 bg-white px-2 py-1.5 shadow-sm">

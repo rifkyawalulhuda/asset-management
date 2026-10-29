@@ -23,7 +23,7 @@ export default function MonthChart({
   const [hover, setHover] = useState<number | null>(null)
 
   const series = useMemo(() => {
-    const sorted = [...rows].sort((a, b) => b.total - a.total)
+    const sorted = [...rows].filter(row => row.total > 0).sort((a, b) => b.total - a.total)
     const top = sorted.slice(0, TOP_N)
     const rest = sorted.slice(TOP_N)
 

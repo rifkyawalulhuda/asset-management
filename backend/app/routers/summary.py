@@ -57,34 +57,51 @@ def summary_monthly(
     return result
 
 
-@router.get("/by-group")
-def summary_by_group(
-    year_ref: int = 2026,
-    site_location: Optional[str] = None,
-    db: Session = Depends(get_db)
-) -> Dict[str, Any]:
-    """Returns yearly depreciation subtotals per group_name.
-    yearly_depreciation is calculated from depreciation_monthly table for consistency."""
+def yearly_depreciation_subquery(db: Session, year_ref: int):
+    """Yearly depreciation per asset, pre-aggregated.
+
+    The monthly table holds one row per asset per month. Joining it directly and
+    summing `purchase_price` / `net_book_value_curr` therefore multiplied those
+    figures by the number of monthly rows (up to twelve). Aggregating first keeps
+    the join at one row per asset.
+    """
+    return (
+        db.query(
+            DepreciationMonthly.asset_id.label("asset_id"),
+            func.sum(DepreciationMonthly.amount).label("yearly_dep"),
+        )
+        .filter(DepreciationMonthly.year == year_ref)
+        .group_by(DepreciationMonthly.asset_id)
+        .subquery()
+    )
+
+
+def summarise_by(db: Session, group_col, year_ref: int, site_location: Optional[str], null_key: str = "UNKNOWN"):
+    dep_sub = yearly_depreciation_subquery(db, year_ref)
+
     query = (
         db.query(
-            FixedAsset.group_name,
-            func.sum(DepreciationMonthly.amount).label("yearly_total"),
+            group_col.label("group_key"),
+            func.sum(dep_sub.c.yearly_dep).label("yearly_total"),
             func.sum(FixedAsset.purchase_price).label("purchase_total"),
             func.sum(FixedAsset.acc_depreciation_curr).label("acc_total"),
             func.sum(FixedAsset.net_book_value_curr).label("nbv_total"),
-            func.count(FixedAsset.id.distinct()).label("count"),
+            func.count(FixedAsset.id).label("count"),
         )
-        .join(DepreciationMonthly, DepreciationMonthly.asset_id == FixedAsset.id)
-        .filter(
-            FixedAsset.year_ref == year_ref,
-            DepreciationMonthly.year == year_ref,
-        )
+        .join(dep_sub, dep_sub.c.asset_id == FixedAsset.id)
+        .filter(FixedAsset.year_ref == year_ref)
     )
     if site_location:
         query = query.filter(FixedAsset.site_location == site_location)
-    rows = query.group_by(FixedAsset.group_name).all()
+
+    rows = (
+        query
+        .group_by(group_col)
+        .order_by(func.sum(dep_sub.c.yearly_dep).desc())
+        .all()
+    )
     return {
-        r.group_name or "Unknown": {
+        (r.group_key or null_key): {
             "yearly_depreciation": float(r.yearly_total or 0),
             "purchase_price": float(r.purchase_total or 0),
             "acc_depreciation": float(r.acc_total or 0),
@@ -93,6 +110,16 @@ def summary_by_group(
         }
         for r in rows
     }
+
+
+@router.get("/by-group")
+def summary_by_group(
+    year_ref: int = 2026,
+    site_location: Optional[str] = None,
+    db: Session = Depends(get_db)
+) -> Dict[str, Any]:
+    """Returns yearly depreciation subtotals per group_name."""
+    return summarise_by(db, FixedAsset.group_name, year_ref, site_location, null_key="Unknown")
 
 
 @router.get("/by-category")
@@ -101,41 +128,44 @@ def summary_by_category(
     site_location: Optional[str] = None,
     db: Session = Depends(get_db)
 ) -> Dict[str, Any]:
-    """Returns yearly depreciation subtotals per category (WH1, WH2, TRP, etc.).
-    yearly_depreciation is calculated from depreciation_monthly table for consistency."""
-    query = (
-        db.query(
-            FixedAsset.category,
-            func.sum(DepreciationMonthly.amount).label("yearly_total"),
-            func.sum(FixedAsset.purchase_price).label("purchase_total"),
-            func.sum(FixedAsset.acc_depreciation_curr).label("acc_total"),
-            func.sum(FixedAsset.net_book_value_curr).label("nbv_total"),
-            func.count(FixedAsset.id.distinct()).label("count"),
-        )
-        .join(DepreciationMonthly, DepreciationMonthly.asset_id == FixedAsset.id)
-        .filter(
-            FixedAsset.year_ref == year_ref,
-            DepreciationMonthly.year == year_ref,
-        )
-    )
-    if site_location:
-        query = query.filter(FixedAsset.site_location == site_location)
+    """Returns yearly depreciation subtotals per category (WH1, WH2, TRP, etc.)."""
+    return summarise_by(db, FixedAsset.category, year_ref, site_location)
+
+
+@router.get("/by-dim")
+def summary_by_dim(
+    year_ref: int = 2026,
+    site_location: Optional[str] = None,
+    group_by: str = Query("group_name", pattern="^(job|category|group_name|site_location)$"),
+    db: Session = Depends(get_db)
+) -> Dict[str, Any]:
+    """Returns yearly subtotals per dimension.
+
+    One generic endpoint backs the Dashboard's composition panel, its analysis
+    table and its Sites tab, so a new dimension never needs a new route.
+    """
+    group_col = {
+        "job": FixedAsset.job,
+        "category": FixedAsset.category,
+        "site_location": FixedAsset.site_location,
+    }.get(group_by, FixedAsset.group_name)
+
+    # Site is the dimension itself here, so a site filter would be redundant.
+    effective_site = None if group_by == "site_location" else site_location
+    return summarise_by(db, group_col, year_ref, effective_site)
+
+
+@router.get("/years")
+def summary_years(db: Session = Depends(get_db)):
+    """Distinct year_ref values that actually contain assets, newest first."""
     rows = (
-        query
-        .group_by(FixedAsset.category)
-        .order_by(func.sum(DepreciationMonthly.amount).desc())
+        db.query(FixedAsset.year_ref)
+        .filter(FixedAsset.year_ref.isnot(None))
+        .group_by(FixedAsset.year_ref)
+        .order_by(FixedAsset.year_ref.desc())
         .all()
     )
-    return {
-        r.category or "UNKNOWN": {
-            "yearly_depreciation": float(r.yearly_total or 0),
-            "purchase_price": float(r.purchase_total or 0),
-            "acc_depreciation": float(r.acc_total or 0),
-            "net_book_value": float(r.nbv_total or 0),
-            "count": r.count,
-        }
-        for r in rows
-    }
+    return [r.year_ref for r in rows]
 
 
 @router.get("/totals")

@@ -76,6 +76,24 @@ export const fetchSummaryByCategory = async (year_ref: number, site_location?: s
   return data
 }
 
+/** Yearly subtotals per dimension: job, category, group_name or site_location. */
+export const fetchSummaryByDim = async (
+  year_ref: number,
+  group_by: 'job' | 'category' | 'group_name' | 'site_location',
+  site_location?: string,
+) => {
+  const params: Record<string, unknown> = { year_ref, group_by }
+  if (site_location) params.site_location = site_location
+  const { data } = await api.get('/summary/by-dim', { params })
+  return data
+}
+
+/** Fiscal years that actually contain assets, newest first. */
+export const fetchSummaryYears = async (): Promise<number[]> => {
+  const { data } = await api.get('/summary/years')
+  return data
+}
+
 export const fetchSiteLocations = async (year_ref?: number): Promise<{ site_location: string; count: number }[]> => {
   const { data } = await api.get('/summary/site-locations', { params: year_ref ? { year_ref } : {} })
   return data

@@ -1,6 +1,6 @@
-import { useMemo, useState } from 'react'
+﻿import { useMemo, useState } from 'react'
 import type { ChartRow, Dim, SummaryItem, SummaryMap } from './forecastUtils'
-import { DIMS, DIM_LABEL, MONTHS, buildSummaryItems, idrCell, idrCompact, idrFull, labelOf, pct } from './forecastUtils'
+import { DIMS, DIM_LABEL, MONTHS, buildSummaryItems, idrCompactCell, idrCompact, idrFull, labelOf, pct } from './forecastUtils'
 
 type View = 'summary' | 'monthly'
 
@@ -36,7 +36,9 @@ export default function AnalysisTable({
   year: number
   onDrill: (dim: Dim, key: string) => void
 }) {
-  const [sort, setSort] = useState<Sort>({ key: 'yearly', dir: 'desc' })
+  const [sort, setSort] = useState<Sort>(() => (
+    view === 'summary' ? { key: 'yearly', dir: 'desc' } : { key: 'total', dir: 'desc' }
+  ))
 
   const items = useMemo<SummaryItem[]>(() => buildSummaryItems(summary), [summary])
 
@@ -186,11 +188,11 @@ export default function AnalysisTable({
                       {item.count.toLocaleString('id-ID')}
                       {item.plannedCount > 0 && <span className="ml-1 text-[9.5px] font-medium text-emerald-600">+{item.plannedCount}</span>}
                     </td>
-                    <td className="px-2 py-[6px] text-right tabular text-slate-600" title={idrFull(item.purchase)}>{idrCell(item.purchase)}</td>
-                    <td className="px-2 py-[6px] text-right tabular text-slate-600" title={idrFull(item.acc)}>{idrCell(item.acc)}</td>
-                    <td className="px-2 py-[6px] text-right tabular text-slate-600" title={idrFull(item.nbv)}>{idrCell(item.nbv)}</td>
+                    <td className="px-2 py-[6px] text-right tabular text-slate-600" title={idrFull(item.purchase)}>{idrCompactCell(item.purchase)}</td>
+                    <td className="px-2 py-[6px] text-right tabular text-slate-600" title={idrFull(item.acc)}>{idrCompactCell(item.acc)}</td>
+                    <td className="px-2 py-[6px] text-right tabular text-slate-600" title={idrFull(item.nbv)}>{idrCompactCell(item.nbv)}</td>
                     <td className="px-2 py-[6px] text-right tabular font-semibold text-slate-900">
-                      {idrCell(item.yearly)}
+                      {idrCompactCell(item.yearly)}
                       {item.plannedYearly > 0 && (
                         <span className="ml-1 text-[9.5px] font-normal text-emerald-600">+{idrCompact(item.plannedYearly)}</span>
                       )}
@@ -214,10 +216,10 @@ export default function AnalysisTable({
               <tr className="border-t border-slate-300 bg-slate-100 text-[11px] font-semibold text-slate-800">
                 <td className="px-2 py-1.5">TOTAL</td>
                 <td className="px-2 py-1.5 text-right tabular">{totalCount.toLocaleString('id-ID')}</td>
-                <td className="px-2 py-1.5 text-right tabular">{idrCell(totalPurchase)}</td>
-                <td className="px-2 py-1.5 text-right tabular">{idrCell(totalAcc)}</td>
-                <td className="px-2 py-1.5 text-right tabular">{idrCell(totalNbv)}</td>
-                <td className="px-2 py-1.5 text-right tabular">{idrCell(totalYearly)}</td>
+                <td className="px-2 py-1.5 text-right tabular">{idrCompactCell(totalPurchase)}</td>
+                <td className="px-2 py-1.5 text-right tabular">{idrCompactCell(totalAcc)}</td>
+                <td className="px-2 py-1.5 text-right tabular">{idrCompactCell(totalNbv)}</td>
+                <td className="px-2 py-1.5 text-right tabular">{idrCompactCell(totalYearly)}</td>
                 <td className="px-2 py-1.5 text-right tabular">100%</td>
               </tr>
             </tfoot>
@@ -255,7 +257,7 @@ export default function AnalysisTable({
                       {value > 0 ? idrCompact(value) : <span className="text-slate-300">—</span>}
                     </td>
                   ))}
-                  <td className="px-2 py-[6px] text-right tabular font-semibold text-slate-900">{idrCell(row.total)}</td>
+                  <td className="px-2 py-[6px] text-right tabular font-semibold text-slate-900">{idrCompactCell(row.total)}</td>
                 </tr>
               ))}
               {!monthlySorted.length && (
@@ -268,7 +270,7 @@ export default function AnalysisTable({
                 {monthlyGrand.months.map((value, index) => (
                   <td key={MONTHS[index]} className="px-1.5 py-1.5 text-right tabular">{value > 0 ? idrCompact(value) : '—'}</td>
                 ))}
-                <td className="px-2 py-1.5 text-right tabular">{idrCell(monthlyGrand.total)}</td>
+                <td className="px-2 py-1.5 text-right tabular">{idrCompactCell(monthlyGrand.total)}</td>
               </tr>
             </tfoot>
           </table>

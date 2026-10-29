@@ -1,5 +1,19 @@
-export const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-export const MONTH_KEYS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec']
+import { MONTH_KEYS } from '../../utils/currency'
+
+export {
+  MONTHS,
+  MONTH_KEYS,
+  PALETTE,
+  OTHER_KEY,
+  OTHER_COLOR,
+  idrFull,
+  idrCompact,
+  idrCell,
+  idrCompactCell,
+  pct,
+  deltaPct,
+  downloadCsv,
+} from '../../utils/currency'
 
 export type Dim = 'job' | 'group' | 'category'
 
@@ -23,10 +37,6 @@ export const DIM_PARAM: Record<Dim, 'job' | 'group_name' | 'category'> = {
 
 /** Dimension value used by the `/forecast/assets` filter parameter. */
 export const ASSET_FILTER: Record<Dim, 'job' | 'group_name' | 'category'> = DIM_PARAM
-
-export const PALETTE = ['#0f766e', '#2563eb', '#7c3aed', '#db2777', '#ea580c', '#0891b2', '#65a30d']
-export const OTHER_KEY = 'Other'
-export const OTHER_COLOR = '#94a3b8'
 
 export interface PlannedAsset {
   id: number
@@ -130,37 +140,7 @@ export interface ForecastAssetsResponse {
   items: ForecastAsset[]
 }
 
-/* ── Formatting ──────────────────────────────────────────────────────────── */
-
-export const idrFull = (value: number | null | undefined): string => {
-  if (value == null) return 'Rp 0'
-  return 'Rp ' + Math.round(Number(value)).toLocaleString('id-ID')
-}
-
-export const idrCompact = (value: number | null | undefined): string => {
-  const amount = Number(value ?? 0)
-  if (!amount) return 'Rp 0'
-  const sign = amount < 0 ? '-' : ''
-  const n = Math.abs(amount)
-  const trim = (x: number) => x.toLocaleString('id-ID', { maximumFractionDigits: x >= 100 ? 0 : 1 })
-  if (n >= 1e12) return `${sign}Rp ${trim(n / 1e12)} T`
-  if (n >= 1e9) return `${sign}Rp ${trim(n / 1e9)} M`
-  if (n >= 1e6) return `${sign}Rp ${trim(n / 1e6)} jt`
-  if (n >= 1e3) return `${sign}Rp ${trim(n / 1e3)} rb`
-  return `${sign}Rp ${trim(n)}`
-}
-
-export const idrCell = (value: number | null | undefined): string => {
-  if (value == null || Number(value) === 0) return '—'
-  return idrFull(value)
-}
-
-export const pct = (value: number, total: number): number => (total > 0 ? (value / total) * 100 : 0)
-
-export const deltaPct = (current: number, previous: number): number | null => {
-  if (!previous) return null
-  return ((current - previous) / previous) * 100
-}
+/* ── Series ──────────────────────────────────────────────────────────────── */
 
 export const monthSeries = (row: MonthlyRow | undefined, includePlanned: boolean): number[] =>
   MONTH_KEYS.map(key => {
@@ -202,24 +182,3 @@ export const buildSummaryItems = (summary: SummaryMap | undefined): SummaryItem[
     plannedYearly: bucket.planned_yearly ?? 0,
     plannedCount: bucket.planned_count ?? 0,
   }))
-
-export function downloadCsv(
-  filename: string,
-  header: string[],
-  rows: (string | number | null | undefined)[][],
-) {
-  const escape = (value: string | number | null | undefined) => {
-    const text = value == null ? '' : String(value)
-    return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text
-  }
-  const content = [header, ...rows].map(row => row.map(escape).join(',')).join('\n')
-  const blob = new Blob([content], { type: 'text/csv;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const link = document.createElement('a')
-  link.href = url
-  link.download = filename
-  document.body.appendChild(link)
-  link.click()
-  link.remove()
-  URL.revokeObjectURL(url)
-}

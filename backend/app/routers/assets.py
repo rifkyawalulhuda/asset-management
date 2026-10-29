@@ -23,6 +23,26 @@ def split_values(raw: str) -> List[str]:
     return [part.strip() for part in raw.split(",") if part.strip()]
 
 
+def apply_text_filter(query, column, raw: str):
+    """Filters a text column, treating the UNKNOWN sentinel as "no value".
+
+    The summary endpoints bucket assets without a value under "UNKNOWN", so a
+    drill-down on that bucket has to look for NULL rather than the literal text.
+    """
+    values = split_values(raw)
+    unknown = [value for value in values if value.upper() == "UNKNOWN"]
+    known = [value for value in values if value.upper() != "UNKNOWN"]
+
+    conditions = []
+    if known:
+        conditions.append(column.in_(known))
+    if unknown:
+        conditions.append(column.is_(None))
+    if not conditions:
+        return query
+    return query.filter(or_(*conditions))
+
+
 def get_asset_by_key(key: str, db: Session) -> FixedAsset:
     """Lookup asset by fixed_asset_number_ax (e.g. BLD000048).
     Falls back to integer id for assets without an AX number."""
@@ -65,13 +85,13 @@ def list_assets(
     if year_ref:
         query = query.filter(FixedAsset.year_ref == year_ref)
     if category:
-        query = query.filter(FixedAsset.category == category)
+        query = apply_text_filter(query, FixedAsset.category, category)
     if group_name:
-        query = query.filter(FixedAsset.group_name == group_name)
+        query = apply_text_filter(query, FixedAsset.group_name, group_name)
     if site_location:
-        query = query.filter(FixedAsset.site_location.in_(split_values(site_location)))
+        query = apply_text_filter(query, FixedAsset.site_location, site_location)
     if job:
-        query = query.filter(FixedAsset.job.in_(split_values(job)))
+        query = apply_text_filter(query, FixedAsset.job, job)
     if search:
         query = query.filter(
             or_(
