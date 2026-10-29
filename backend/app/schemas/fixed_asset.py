@@ -112,6 +112,8 @@ class FixedAssetUpdate(BaseModel):
 
 class FixedAssetResponse(FixedAssetBase):
     id: int
+    is_active: Optional[bool] = True
+    last_seen_at: Optional[datetime] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     depreciation_monthly: List[DepreciationMonthlyResponse] = []

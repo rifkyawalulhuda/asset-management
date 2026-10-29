@@ -45,6 +45,9 @@ export interface FixedAsset {
   photo_status: string | null
   remark: string | null
   year_ref: number
+  /** False when a later import no longer contained this asset (disposed). */
+  is_active: boolean
+  last_seen_at: string | null
   created_at: string | null
   updated_at: string | null
   depreciation_monthly: DepreciationMonthly[]

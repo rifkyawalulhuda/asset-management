@@ -1,13 +1,13 @@
-from typing import Optional, Dict, Any, List
+﻿from typing import Optional, Dict, Any, List
 from decimal import Decimal
 from datetime import date
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.database import get_db
 from app.models.fixed_asset import FixedAsset
 from app.models.planned_asset import PlannedAsset
-from app.services.depreciation import build_schedule
+from app.services.depreciation import build_schedule, year_schedule
 
 router = APIRouter(prefix="/forecast", tags=["forecast"])
 
@@ -33,12 +33,7 @@ def is_non_depreciable(asset: FixedAsset) -> bool:
 
 def calc_asset_forecast(asset: FixedAsset, forecast_year: int) -> Optional[Dict]:
     """Calculate forecasted depreciation for a single existing asset."""
-    schedule = build_schedule(
-        asset.purchase_price,
-        asset.depreciation_period_total,
-        asset.purchase_date,
-        forecast_year,
-    )
+    schedule = year_schedule(asset, forecast_year)
     if schedule is None:
         return None
 
@@ -128,8 +123,15 @@ def calc_planned_forecast(asset: PlannedAsset, forecast_year: int) -> Optional[D
 
 
 def get_assets(db: Session, site_location: Optional[str], year_ref: int = 2026) -> List[FixedAsset]:
-    """Fetch all assets for the base year (2026 is source of truth)."""
-    q = db.query(FixedAsset).filter(FixedAsset.year_ref == year_ref)
+    """Fetch all active assets for the base year (2026 is source of truth).
+
+    The monthly schedule is eager-loaded: the base year reads its recorded
+    figures instead of recomputing them, so every page reports the same number.
+    """
+    q = db.query(FixedAsset).options(joinedload(FixedAsset.depreciation_monthly)).filter(
+        FixedAsset.year_ref == year_ref,
+        FixedAsset.is_active.is_(True),
+    )
     if site_location:
         q = q.filter(FixedAsset.site_location == site_location)
     return q.all()
@@ -193,6 +195,7 @@ def forecast_totals(
     excluded_assets = 0
     excluded_missing_data = 0
     excluded_non_depreciable = 0
+    excluded_reasons: Dict[str, int] = {}
 
     for asset in assets:
         fc = calc_asset_forecast(asset, forecast_year)
@@ -203,7 +206,9 @@ def forecast_totals(
             total_nbv += fc["nbv_curr"]
         else:
             excluded_assets += 1
-            if is_non_depreciable(asset):
+            reason = exclusion_reason(asset)
+            excluded_reasons[reason] = excluded_reasons.get(reason, 0) + 1
+            if reason == "non_depreciable":
                 excluded_non_depreciable += 1
             else:
                 excluded_missing_data += 1
@@ -232,6 +237,7 @@ def forecast_totals(
         "excluded_assets": excluded_assets,
         "excluded_missing_data": excluded_missing_data,
         "excluded_non_depreciable": excluded_non_depreciable,
+        "excluded_reasons": excluded_reasons,
         "forecasted_assets": total_assets - excluded_assets,
         "total_purchase_price": total_purchase,
         "total_yearly_depreciation": total_yearly_dep,
@@ -389,8 +395,26 @@ def forecast_by_category(
     return dict(sorted(result.items(), key=lambda x: x[1]["yearly_depreciation"], reverse=True))
 
 
+def exclusion_reason(asset: FixedAsset) -> str:
+    """Why this asset cannot be forecast.
+
+    The UI names the missing input directly: "no data" alone sent people looking
+    at the wrong column, because a row can carry a price and a useful life and
+    still be unforecastable for lack of a purchase date.
+    """
+    if is_non_depreciable(asset):
+        return "non_depreciable"
+    if not asset.purchase_price:
+        return "missing_price"
+    if not asset.depreciation_period_total:
+        return "missing_period"
+    if not asset.purchase_date:
+        return "missing_date"
+    return "missing_data"
+
+
 def _excluded_row(asset: FixedAsset) -> Dict[str, Any]:
-    """Row for an asset that cannot be forecast (missing price or period).
+    """Row for an asset that cannot be forecast (missing price, period or date).
 
     It is returned only when `include_excluded=true`, so it can be surfaced in
     the asset grid instead of silently disappearing from the report.
@@ -415,9 +439,7 @@ def _excluded_row(asset: FixedAsset) -> Dict[str, Any]:
         "months": {month: 0.0 for month in MONTHS},
         "is_planned": False,
         "excluded": True,
-        "excluded_reason": (
-            "non_depreciable" if is_non_depreciable(asset) else "missing_data"
-        ),
+        "excluded_reason": exclusion_reason(asset),
     }
 
 

@@ -35,3 +35,6 @@ dist/
 
 # Alembic
 *.pyc
+
+# Import rollback snapshots (generated, one file per applied import)
+backend/import_snapshots/

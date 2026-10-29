@@ -1,29 +1,33 @@
 import { useEffect, useRef, useState } from 'react'
-import type { AxiosError } from 'axios'
-import api from '../services/api'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import {
+  applyImport,
+  fetchImportRuns,
+  previewImport,
+  type ImportPreview,
+  type ImportResult,
+  type ImportSample,
+} from '../services/assets'
+import { apiErrorMessage } from '../utils/apiError'
+import { idrCell } from '../utils/currency'
+import { formatDate } from '../utils/format'
 
-type ImportStatus = 'idle' | 'uploading' | 'processing' | 'success' | 'error'
-
-type ImportResponse = {
-  message: string
-  details: Record<string, number>
-  elapsed_ms?: number
-}
+type Stage = 'idle' | 'previewing' | 'previewed' | 'applying' | 'applied'
 
 const formatMb = (bytes: number) => `${(bytes / (1024 * 1024)).toFixed(2)} MB`
 
-/** FastAPI returns `detail` as a string for HTTPException and as an array for 422. */
-function readDetail(data: unknown): string | null {
-  if (!data || typeof data !== 'object') return null
-  const detail = (data as { detail?: unknown }).detail
-  if (typeof detail === 'string') return detail
-  if (Array.isArray(detail)) {
-    const messages = detail
-      .map(item => (item && typeof item === 'object' ? (item as { msg?: unknown }).msg : null))
-      .filter((msg): msg is string => typeof msg === 'string' && msg.length > 0)
-    return messages.length > 0 ? messages.join('; ') : null
-  }
-  return null
+const FIELD_LABEL: Record<string, string> = {
+  purchase_price: 'harga',
+  depreciation_period_total: 'periode',
+  purchase_date: 'tgl beli',
+  name: 'nama',
+  site_location: 'site',
+  job: 'job',
+  group_name: 'group',
+  dep_expense_current: 'beban tahun',
+  acc_depreciation_curr: 'akumulasi',
+  net_book_value_curr: 'NBV',
+  monthly_depreciation: 'depresiasi/bulan',
 }
 
 function UploadIcon() {
@@ -41,40 +45,122 @@ function UploadIcon() {
   )
 }
 
+function Stat({ label, value, tone }: { label: string; value: number; tone?: 'in' | 'out' | 'muted' }) {
+  const color = tone === 'in'
+    ? 'text-emerald-700'
+    : tone === 'out'
+      ? 'text-rose-600'
+      : tone === 'muted'
+        ? 'text-slate-400'
+        : 'text-slate-900'
+  return (
+    <div className="rounded border border-slate-200 bg-white px-2.5 py-1.5">
+      <p className="text-[9.5px] font-semibold uppercase tracking-[0.1em] text-slate-400">{label}</p>
+      <p className={`tabular mt-0.5 text-[15px] font-semibold leading-none ${color}`}>{value.toLocaleString('id-ID')}</p>
+    </div>
+  )
+}
+
+function SampleList({ title, rows, render }: {
+  title: string
+  rows: ImportSample[]
+  render: (row: ImportSample) => string
+}) {
+  if (!rows.length) return null
+  return (
+    <details className="mt-2 rounded border border-slate-200 bg-white">
+      <summary className="cursor-pointer px-2.5 py-1.5 text-[11px] font-medium text-slate-700 hover:bg-slate-50">
+        {title} <span className="tabular text-slate-400">({rows.length})</span>
+      </summary>
+      <ul className="max-h-48 overflow-auto fx-scroll border-t border-slate-100 px-2.5 py-1.5">
+        {rows.map(row => (
+          <li key={`${row.ax}-${render(row)}`} className="flex items-baseline justify-between gap-2 py-[2px] text-[10.5px]">
+            <span className="font-mono text-slate-600">{row.ax}</span>
+            <span className="min-w-0 flex-1 truncate text-slate-600" title={row.name ?? ''}>{render(row)}</span>
+          </li>
+        ))}
+      </ul>
+    </details>
+  )
+}
+
 export default function ImportExcel() {
+  const qc = useQueryClient()
   const [file, setFile] = useState<File | null>(null)
-  const [status, setStatus] = useState<ImportStatus>('idle')
-  const [message, setMessage] = useState('')
-  const [details, setDetails] = useState<Record<string, number> | null>(null)
+  const [stage, setStage] = useState<Stage>('idle')
+  const [preview, setPreview] = useState<ImportPreview | null>(null)
+  const [result, setResult] = useState<ImportResult | null>(null)
+  const [error, setError] = useState<string | null>(null)
   const [progress, setProgress] = useState(0)
   const [elapsed, setElapsed] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
 
-  const busy = status === 'uploading' || status === 'processing'
+  const busy = stage === 'previewing' || stage === 'applying'
+
+  const { data: runs = [] } = useQuery({
+    queryKey: ['import-runs'],
+    queryFn: () => fetchImportRuns(10),
+    staleTime: 10_000,
+  })
 
   useEffect(() => {
     if (!busy) return
     const startedAt = Date.now()
     setElapsed(0)
-    const timer = setInterval(() => {
-      setElapsed(Math.round((Date.now() - startedAt) / 1000))
-    }, 500)
+    const timer = setInterval(() => setElapsed(Math.round((Date.now() - startedAt) / 1000)), 500)
     return () => clearInterval(timer)
   }, [busy])
+
+  const reset = () => {
+    setPreview(null)
+    setResult(null)
+    setError(null)
+    setProgress(0)
+    setElapsed(0)
+    setStage('idle')
+  }
 
   const selectFile = (candidate: File | null | undefined) => {
     if (!candidate) return
     if (!/\.xlsx?$/i.test(candidate.name)) {
-      setStatus('error')
-      setMessage('File harus berformat .xlsx atau .xls.')
+      setError('File harus berformat .xlsx atau .xls.')
+      setStage('idle')
       return
     }
     setFile(candidate)
-    setStatus('idle')
-    setMessage('')
-    setDetails(null)
+    reset()
+  }
+
+  const runPreview = async () => {
+    if (!file || busy) return
+    setStage('previewing')
+    setError(null)
+    setPreview(null)
     setProgress(0)
-    setElapsed(0)
+    try {
+      const data = await previewImport(file, setProgress)
+      setPreview(data)
+      setStage('previewed')
+    } catch (err) {
+      setError(apiErrorMessage(err) ?? 'Preview gagal.')
+      setStage('idle')
+    }
+  }
+
+  const runApply = async () => {
+    if (!file || !preview || busy) return
+    setStage('applying')
+    setError(null)
+    setProgress(0)
+    try {
+      const data = await applyImport(file, preview.file_hash, setProgress)
+      setResult(data)
+      setStage('applied')
+      qc.invalidateQueries()
+    } catch (err) {
+      setError(apiErrorMessage(err) ?? 'Import gagal.')
+      setStage('previewed')
+    }
   }
 
   const handleDrop = (event: React.DragEvent) => {
@@ -83,58 +169,16 @@ export default function ImportExcel() {
     selectFile(event.dataTransfer.files[0])
   }
 
-  const handleImport = async () => {
-    if (!file || busy) return
-
-    setStatus('uploading')
-    setMessage('')
-    setDetails(null)
-    setProgress(0)
-
-    try {
-      const formData = new FormData()
-      formData.append('file', file)
-
-      const { data } = await api.post<ImportResponse>('/import/excel', formData, {
-        onUploadProgress: event => {
-          if (!event.total) return
-          const percent = Math.min(100, Math.round((event.loaded / event.total) * 100))
-          setProgress(percent)
-          if (percent >= 100) setStatus('processing')
-        },
-      })
-
-      setStatus('success')
-      setMessage(data.message)
-      setDetails(data.details ?? null)
-    } catch (err) {
-      const error = err as AxiosError<unknown>
-      setStatus('error')
-
-      if (error.response) {
-        setMessage(
-          readDetail(error.response.data) ??
-            `Server menolak permintaan (HTTP ${error.response.status}).`,
-        )
-      } else if (error.code === 'ECONNABORTED') {
-        setMessage('Permintaan timeout. Coba lagi, atau impor langsung di server.')
-      } else {
-        setMessage(
-          `Tidak dapat menghubungi server di ${api.defaults.baseURL}. Pastikan backend berjalan dan port 8000 dapat diakses dari perangkat ini.`,
-        )
-      }
-    }
-  }
+  const deactivateImpact = preview?.deactivate_samples.reduce((sum, row) => sum + (row.dep_expense ?? 0), 0) ?? 0
 
   return (
-    <div className="max-w-xl">
+    <div className="max-w-3xl">
       <h1 className="text-[19px] font-semibold leading-tight text-slate-900">Import Excel</h1>
       <p className="mt-0.5 text-[11.5px] leading-relaxed text-slate-500">
-        Upload file XLSX untuk mengimpor data aset. Data yang sudah ada diperbarui (upsert), tidak
-        diduplikasi.
+        File Excel adalah sumber kebenaran. Import selalu <strong>preview dulu</strong> — tidak ada yang
+        ditulis sebelum Anda menekan Apply.
       </p>
 
-      {/* Drop zone */}
       <div
         role="button"
         tabIndex={0}
@@ -155,21 +199,13 @@ export default function ImportExcel() {
         {file ? (
           <div className="flex items-center justify-center gap-2">
             <div className="min-w-0 text-left">
-              <div className="truncate text-[12px] font-medium text-slate-800" title={file.name}>
-                {file.name}
-              </div>
-              <div className="text-[11px] text-slate-500 tabular">{formatMb(file.size)}</div>
+              <div className="truncate text-[12px] font-medium text-slate-800" title={file.name}>{file.name}</div>
+              <div className="tabular text-[11px] text-slate-500">{formatMb(file.size)}</div>
             </div>
             {!busy && (
               <button
                 type="button"
-                onClick={event => {
-                  event.stopPropagation()
-                  setFile(null)
-                  setStatus('idle')
-                  setMessage('')
-                  setDetails(null)
-                }}
+                onClick={event => { event.stopPropagation(); setFile(null); reset() }}
                 aria-label="Hapus file"
                 className="rounded p-1 text-slate-400 transition-colors hover:bg-slate-200 hover:text-slate-700"
               >
@@ -182,9 +218,7 @@ export default function ImportExcel() {
         ) : (
           <>
             <UploadIcon />
-            <div className="mt-2 text-[12px] font-medium text-slate-700">
-              Drag &amp; drop file XLSX di sini
-            </div>
+            <div className="mt-2 text-[12px] font-medium text-slate-700">Drag &amp; drop file XLSX di sini</div>
             <div className="text-[11px] text-slate-400">atau klik untuk pilih file</div>
           </>
         )}
@@ -194,83 +228,172 @@ export default function ImportExcel() {
           type="file"
           accept=".xlsx,.xls"
           className="hidden"
-          onChange={event => {
-            selectFile(event.target.files?.[0])
-            event.target.value = ''
-          }}
+          onChange={event => { selectFile(event.target.files?.[0]); event.target.value = '' }}
         />
       </div>
 
-      {/* Import button */}
-      <button
-        type="button"
-        onClick={handleImport}
-        disabled={!file || busy}
-        className="mt-4 w-full rounded bg-slate-800 py-2 text-[12px] font-semibold text-white transition-colors hover:bg-slate-900 disabled:cursor-not-allowed disabled:opacity-40"
-      >
-        {status === 'uploading'
-          ? `Mengunggah ${progress}%…`
-          : status === 'processing'
-            ? `Memproses… ${elapsed}s`
-            : 'Import Data'}
-      </button>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={runPreview}
+          disabled={!file || busy}
+          className="rounded border border-slate-300 bg-white px-3 py-1.5 text-[11.5px] font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          {stage === 'previewing' ? `Memeriksa… ${elapsed}s` : 'Preview perubahan'}
+        </button>
+        <button
+          type="button"
+          onClick={runApply}
+          disabled={!preview || busy || Boolean(result)}
+          className="rounded bg-slate-800 px-3 py-1.5 text-[11.5px] font-semibold text-white transition-colors hover:bg-slate-900 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          {stage === 'applying' ? `Menerapkan… ${elapsed}s` : 'Apply import'}
+        </button>
+      </div>
 
-      {/* Progress */}
       {busy && (
         <div className="mt-3">
           <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-200">
             <div
-              className={`h-full rounded-full bg-blue-700 transition-[width] duration-300 ${
-                status === 'processing' ? 'w-full animate-pulse' : ''
-              }`}
-              style={status === 'processing' ? undefined : { width: `${progress}%` }}
+              className={`h-full rounded-full bg-blue-700 transition-[width] duration-300 ${stage === 'applying' ? 'w-full animate-pulse' : ''}`}
+              style={stage === 'applying' ? undefined : { width: `${progress}%` }}
             />
           </div>
           <p className="mt-1.5 text-[11px] text-slate-500">
-            {status === 'processing'
-              ? `File sudah terkirim. Server sedang memproses… ${elapsed}s — jangan tutup halaman ini.`
+            {stage === 'applying'
+              ? 'Menulis ke database dalam satu transaksi… jangan tutup halaman ini.'
               : `Mengunggah ${progress}%…`}
           </p>
         </div>
       )}
 
-      {/* Result */}
-      {status === 'success' && (
-        <div className="mt-4 rounded border border-green-200 bg-green-50 p-3 text-[11.5px] text-green-800">
-          <p className="font-semibold">{message}</p>
-          {details && (
-            <ul className="mt-1.5 space-y-0.5 text-[11px] text-green-700">
-              {Object.entries(details).map(([sheet, count]) => (
-                <li key={sheet}>
-                  <span className="font-medium">{sheet}</span>: {count} baris
-                </li>
-              ))}
+      {error && (
+        <div className="mt-4 rounded border border-rose-200 bg-rose-50 p-3 text-[11.5px] text-rose-800">
+          <p className="font-semibold">Gagal</p>
+          <p className="mt-0.5 leading-relaxed">{error}</p>
+        </div>
+      )}
+
+      {preview && !result && (
+        <section className="mt-4 rounded-md border border-slate-200 bg-white shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-3 py-2">
+            <div>
+              <h2 className="text-[12px] font-semibold text-slate-800">Preview perubahan</h2>
+              <p className="text-[10.5px] text-slate-500">
+                {preview.filename} · tahun {preview.years.join(', ') || '—'} · belum ada yang ditulis
+              </p>
+            </div>
+            <span className="tabular rounded bg-slate-100 px-1.5 py-[2px] text-[9.5px] text-slate-500" title={preview.file_hash}>
+              {preview.file_hash.slice(0, 10)}
+            </span>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2 px-3 py-2.5 sm:grid-cols-5">
+            <Stat label="Baru" value={preview.assets.created} tone="in" />
+            <Stat label="Berubah" value={preview.assets.updated} />
+            <Stat label="Tetap" value={preview.assets.unchanged} tone="muted" />
+            <Stat label="Nonaktif" value={preview.assets.deactivated} tone="out" />
+            <Stat label="Aktif lagi" value={preview.assets.reactivated} tone="in" />
+          </div>
+
+          <div className="border-t border-slate-100 px-3 py-2 text-[10.5px] text-slate-600">
+            Movement: <span className="font-medium text-slate-800">{preview.approvals.created}</span> baru ·{' '}
+            <span className="font-medium text-slate-800">{preview.approvals.updated}</span> diperbarui
+            {preview.assets.deactivated > 0 && (
+              <>
+                {' · '}dampak deaktivasi ke beban 2026: <span className="tabular font-medium text-rose-600">−{idrCell(deactivateImpact)}</span>
+              </>
+            )}
+          </div>
+
+          {preview.warnings.length > 0 && (
+            <ul className="border-t border-amber-100 bg-amber-50 px-3 py-2 text-[10.5px] leading-relaxed text-amber-900">
+              {preview.warnings.map(warning => <li key={warning}>• {warning}</li>)}
             </ul>
+          )}
+
+          <div className="px-3 pb-3">
+            <SampleList
+              title="Akan dinonaktifkan (tidak ada di file)"
+              rows={preview.deactivate_samples}
+              render={row => `${row.name ?? ''} · ${idrCell(row.dep_expense)}`.trim()}
+            />
+            <SampleList
+              title="Akan diubah"
+              rows={preview.update_samples}
+              render={row => (row.fields ?? []).map(field => FIELD_LABEL[field] ?? field).join(', ')}
+            />
+            <SampleList title="Aset baru" rows={preview.create_samples} render={row => row.name ?? ''} />
+            <SampleList title="Aktif kembali" rows={preview.reactivate_samples} render={row => row.name ?? ''} />
+          </div>
+        </section>
+      )}
+
+      {result && (
+        <div className="mt-4 rounded border border-emerald-200 bg-emerald-50 p-3 text-[11.5px] text-emerald-900">
+          <p className="font-semibold">{result.message}</p>
+          <p className="mt-1 text-[10.5px] text-emerald-800">
+            {result.details.approval_created} movement baru · {result.details.approval_updated} diperbarui ·
+            selesai dalam {result.elapsed_ms} ms
+          </p>
+          {result.snapshot && (
+            <p className="mt-1 break-all text-[10px] text-emerald-700">Snapshot: {result.snapshot}</p>
           )}
         </div>
       )}
 
-      {status === 'error' && (
-        <div className="mt-4 rounded border border-red-200 bg-red-50 p-3 text-[11.5px] text-red-700">
-          <p className="font-semibold">Import gagal</p>
-          <p className="mt-0.5 leading-relaxed">{message}</p>
-          <button
-            type="button"
-            onClick={handleImport}
-            className="mt-2 rounded border border-red-300 bg-white px-2.5 py-1 text-[11px] font-medium text-red-700 hover:bg-red-100"
-          >
-            Coba lagi
-          </button>
+      <section className="mt-5 rounded-md border border-slate-200 bg-white shadow-sm">
+        <div className="border-b border-slate-100 px-3 py-2">
+          <h2 className="text-[12px] font-semibold text-slate-800">Riwayat import</h2>
+          <p className="text-[10.5px] text-slate-500">10 import terakhir, terbaru di atas</p>
         </div>
-      )}
+        {runs.length === 0 ? (
+          <p className="px-3 py-3 text-[11px] text-slate-400">Belum ada import yang tercatat.</p>
+        ) : (
+          <div className="overflow-x-auto fx-scroll">
+            <table className="w-full text-left text-[11px]">
+              <thead className="bg-slate-50 text-[9.5px] uppercase tracking-[0.08em] text-slate-500">
+                <tr className="border-b border-slate-200">
+                  <th className="px-3 py-1.5 font-semibold" scope="col">Waktu</th>
+                  <th className="px-2 py-1.5 font-semibold" scope="col">File</th>
+                  <th className="px-2 py-1.5 font-semibold" scope="col">Tahun</th>
+                  <th className="px-2 py-1.5 text-right font-semibold" scope="col">Baru</th>
+                  <th className="px-2 py-1.5 text-right font-semibold" scope="col">Ubah</th>
+                  <th className="px-2 py-1.5 text-right font-semibold" scope="col">Nonaktif</th>
+                  <th className="px-2 py-1.5 text-right font-semibold" scope="col">Movement</th>
+                </tr>
+              </thead>
+              <tbody>
+                {runs.map(run => (
+                  <tr key={run.id} className="border-b border-slate-100 last:border-0">
+                    <td className="whitespace-nowrap px-3 py-[5px] text-slate-600">
+                      {run.created_at ? formatDate(run.created_at) : '—'}
+                    </td>
+                    <td className="max-w-[220px] truncate px-2 py-[5px] text-slate-700" title={run.filename ?? ''}>
+                      {run.filename ?? '—'}
+                    </td>
+                    <td className="tabular px-2 py-[5px] text-slate-600">{run.years ?? '—'}</td>
+                    <td className="tabular px-2 py-[5px] text-right text-emerald-700">{run.assets_created}</td>
+                    <td className="tabular px-2 py-[5px] text-right text-slate-700">{run.assets_updated}</td>
+                    <td className="tabular px-2 py-[5px] text-right text-rose-600">{run.assets_deactivated}</td>
+                    <td className="tabular px-2 py-[5px] text-right text-slate-600">
+                      {run.approval_created + run.approval_updated}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
 
-      {/* Info */}
-      <div className="mt-5 rounded border border-slate-200 bg-slate-50 p-3 text-[11.5px] text-slate-600">
-        <div className="font-semibold text-slate-700">Sheet yang akan diimport</div>
-        <ul className="mt-1.5 list-inside list-disc space-y-0.5 text-[11px]">
-          <li><strong>FA_2026</strong> — fixed assets + jadwal depresiasi 2026</li>
-          <li><strong>FA_2025</strong> — fixed assets 2025</li>
-          <li><strong>List Approval 2022 / 2021</strong> — data akuisisi &amp; disposal</li>
+      <div className="mt-4 rounded border border-slate-200 bg-slate-50 p-3 text-[11px] text-slate-600">
+        <div className="font-semibold text-slate-700">Yang dijaga oleh import</div>
+        <ul className="mt-1.5 list-inside list-disc space-y-0.5">
+          <li><strong>Category</strong> tidak pernah ditimpa — nilainya milik aplikasi, terikat ke nomor AX.</li>
+          <li>Aset yang hilang dari file ditandai <strong>nonaktif</strong>; baris dan jadwalnya disimpan.</li>
+          <li>Semua perubahan masuk dalam <strong>satu transaksi</strong>; gagal berarti tidak ada yang tersimpan.</li>
+          <li>Sebelum menulis, nilai baris terdampak disimpan sebagai <strong>snapshot</strong>.</li>
         </ul>
       </div>
     </div>

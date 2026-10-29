@@ -45,6 +45,11 @@ class FixedAsset(Base):
     photo_status = Column(String(50))
     remark = Column(Text)
     year_ref = Column(Integer, default=2026, index=True)
+    # The Excel workbook is the source of truth for which assets exist. An asset
+    # that disappears from the file has been disposed, so the row is kept for
+    # history but deactivated instead of being deleted outright.
+    is_active = Column(Boolean, nullable=False, default=True, server_default="true", index=True)
+    last_seen_at = Column(DateTime)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 

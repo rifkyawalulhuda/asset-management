@@ -15,7 +15,7 @@ from app.models.fixed_asset import FixedAsset
 from app.models.depreciation_monthly import DepreciationMonthly
 from app.models.acquisition_disposal import AcquisitionDisposal
 from app.models.planned_asset import PlannedAsset
-from app.services.depreciation import build_schedule
+from app.services.depreciation import build_schedule, year_schedule
 
 router = APIRouter(prefix="/export", tags=["export"])
 
@@ -332,7 +332,10 @@ def export_excel(
     q = (
         db.query(FixedAsset)
         .options(joinedload(FixedAsset.depreciation_monthly))
-        .filter(FixedAsset.year_ref == year_ref)
+        .filter(
+            FixedAsset.year_ref == year_ref,
+            FixedAsset.is_active.is_(True),
+        )
     )
     if site_location:
         q = q.filter(FixedAsset.site_location == site_location)
@@ -404,12 +407,7 @@ def _calc_planned_fc(asset: PlannedAsset, forecast_year: int):
 
 
 def _calc_existing_fc(asset: FixedAsset, forecast_year: int):
-    schedule = build_schedule(
-        asset.purchase_price,
-        asset.depreciation_period_total,
-        asset.purchase_date,
-        forecast_year,
-    )
+    schedule = year_schedule(asset, forecast_year)
     if schedule is None:
         return None
     return {
@@ -681,7 +679,10 @@ def export_forecast_excel(
     from app.routers.forecast import get_planned_assets
 
     # Fetch existing assets (base year 2026)
-    q = db.query(FixedAsset).filter(FixedAsset.year_ref == 2026)
+    q = db.query(FixedAsset).filter(
+        FixedAsset.year_ref == 2026,
+        FixedAsset.is_active.is_(True),
+    )
     if site_location:
         q = q.filter(FixedAsset.site_location == site_location)
     existing = q.all()

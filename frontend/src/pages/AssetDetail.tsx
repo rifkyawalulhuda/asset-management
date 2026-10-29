@@ -257,6 +257,14 @@ export default function AssetDetail() {
                 Additional
               </span>
             )}
+            {asset.is_active === false && (
+              <span
+                className="inline-flex items-center rounded border border-amber-300 bg-amber-50 px-1.5 py-[1px] text-[10.5px] font-medium text-amber-800"
+                title="No longer present in the latest imported workbook"
+              >
+                Inactive — not in latest import
+              </span>
+            )}
             <button
               type="button"
               onClick={() => setShowAll(value => !value)}

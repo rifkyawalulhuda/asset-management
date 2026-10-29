@@ -1,4 +1,4 @@
-from typing import Optional, Dict, Any
+﻿from typing import Optional, Dict, Any
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import func, case
@@ -35,6 +35,7 @@ def summary_monthly(
         .join(DepreciationMonthly, DepreciationMonthly.asset_id == FixedAsset.id)
         .filter(
             FixedAsset.year_ref == year_ref,
+            FixedAsset.is_active.is_(True),
             DepreciationMonthly.year == year_ref,
         )
     )
@@ -89,7 +90,7 @@ def summarise_by(db: Session, group_col, year_ref: int, site_location: Optional[
             func.count(FixedAsset.id).label("count"),
         )
         .join(dep_sub, dep_sub.c.asset_id == FixedAsset.id)
-        .filter(FixedAsset.year_ref == year_ref)
+        .filter(FixedAsset.year_ref == year_ref, FixedAsset.is_active.is_(True))
     )
     if site_location:
         query = query.filter(FixedAsset.site_location == site_location)
@@ -196,7 +197,7 @@ def summary_totals(
             func.sum(dep_sub.c.yearly_dep).label("total_yearly_depr"),
         )
         .outerjoin(dep_sub, dep_sub.c.asset_id == FixedAsset.id)
-        .filter(FixedAsset.year_ref == year_ref)
+        .filter(FixedAsset.year_ref == year_ref, FixedAsset.is_active.is_(True))
     )
     if site_location:
         query = query.filter(FixedAsset.site_location == site_location)
@@ -216,7 +217,10 @@ def get_site_locations(year_ref: Optional[int] = None, db: Session = Depends(get
     query = db.query(
         FixedAsset.site_location,
         func.count(FixedAsset.id).label("count"),
-    ).filter(FixedAsset.site_location.isnot(None))
+    ).filter(
+        FixedAsset.site_location.isnot(None),
+        FixedAsset.is_active.is_(True),
+    )
     if year_ref:
         query = query.filter(FixedAsset.year_ref == year_ref)
     rows = (
@@ -238,7 +242,10 @@ def get_jobs(
     query = db.query(
         FixedAsset.job,
         func.count(FixedAsset.id).label("count"),
-    ).filter(FixedAsset.job.isnot(None))
+    ).filter(
+        FixedAsset.job.isnot(None),
+        FixedAsset.is_active.is_(True),
+    )
     if year_ref:
         query = query.filter(FixedAsset.year_ref == year_ref)
     if site_location:

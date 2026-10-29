@@ -378,6 +378,7 @@ export default function ForecastPage() {
             includeExcluded={includeExcluded}
             onIncludeExcluded={value => update({ excluded: value ? '1' : null, page: 1 })}
             excludedCount={totals?.excluded_assets ?? 0}
+            excludedReasons={totals?.excluded_reasons}
           />
         </div>
       )

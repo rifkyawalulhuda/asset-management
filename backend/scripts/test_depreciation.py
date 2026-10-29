@@ -3,13 +3,18 @@
 Run with:
     python -m scripts.test_depreciation
 
-Each test names the bug it locks down. The database tests run inside a
-transaction that is rolled back, so the real data is never touched.
+Each test names the bug it locks down. The database tests run against a private
+in-memory SQLite database — never the application's own — because the code under
+test commits internally (the update endpoint does), and a rollback would not be
+enough to keep real data safe.
 """
 from datetime import date
 from decimal import Decimal
 
-from app.database import SessionLocal
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
+from app.database import Base
 from app.models.depreciation_monthly import DepreciationMonthly
 from app.models.fixed_asset import FixedAsset
 from app.services.depreciation import (
@@ -82,11 +87,13 @@ eq("missing period -> no schedule", build_schedule(120_000_000, 0, date(2024, 1,
 eq("missing price -> no schedule", build_schedule(None, 60, date(2024, 1, 1), 2026), None)
 
 
-# ── database behaviour (rolled back) ───────────────────────────────────────
+# ── database behaviour (isolated in-memory database) ───────────────────────
 
-print("\ndatabase behaviour (transaction rolled back)")
+print("\ndatabase behaviour (private in-memory database)")
 
-db = SessionLocal()
+_engine = create_engine("sqlite:///:memory:")
+Base.metadata.create_all(_engine)
+db = sessionmaker(bind=_engine)()
 try:
     def new_asset(ax, price, period, purchase_date):
         asset = FixedAsset(
@@ -142,10 +149,58 @@ try:
 
     asset3.monthly_depreciation = Decimal("2161624500") / Decimal("240")
     check("accepts the correct monthly amount", monthly_matches_price(asset3) is True)
+
+    # ── bug 2: an edit that does not touch the schedule must not rewrite it ──
+    print("\nsaving without touching the schedule")
+    from app.routers.assets import update_asset
+    from app.schemas.fixed_asset import FixedAssetUpdate
+
+    asset4 = new_asset("TEST0004", Decimal("120000000"), 60, date(2024, 1, 15))
+    db.flush()
+    recalculate_summary_fields(asset4, 2026)
+    generate_monthly_rows(db, asset4, 2026)
+    db.flush()
+
+    # the workbook figure deliberately differs from the textbook formula, the way
+    # a mid-year snapshot would: nine months booked instead of twelve
+    asset4.dep_period_yearly = Decimal("9")
+    asset4.dep_expense_current = Decimal("18000000")
+    asset4.acc_depreciation_curr = Decimal("66000000")
+    asset4.net_book_value_curr = Decimal("54000000")
+    db.flush()
+
+    before = (
+        asset4.dep_expense_current, asset4.acc_depreciation_curr,
+        asset4.net_book_value_curr, asset4.dep_period_yearly,
+    )
+    rows_before = sum(
+        Decimal(str(row.amount)) for row in db.query(DepreciationMonthly)
+        .filter(DepreciationMonthly.asset_id == asset4.id).all()
+    )
+
+    # an edit that only changes a descriptive field
+    update_asset("TEST0004", FixedAssetUpdate(category="WH2", remark="touched"), db)
+    db.flush()
+
+    eq("category-only save keeps the expense", asset4.dep_expense_current, before[0])
+    eq("category-only save keeps acc. depreciation", asset4.acc_depreciation_curr, before[1])
+    eq("category-only save keeps the NBV", asset4.net_book_value_curr, before[2])
+    eq("category-only save keeps the period count", asset4.dep_period_yearly, before[3])
+    eq("category-only save keeps the monthly rows", sum(
+        Decimal(str(row.amount)) for row in db.query(DepreciationMonthly)
+        .filter(DepreciationMonthly.asset_id == asset4.id).all()
+    ), rows_before)
+    eq("the descriptive edit itself landed", asset4.category, "WH2")
+
+    # changing the purchase price must recalculate
+    update_asset("TEST0004", FixedAssetUpdate(purchase_price=Decimal("240000000")), db)
+    db.flush()
+    eq("price change recalculates the monthly amount", asset4.monthly_depreciation, Decimal("4000000"))
+    eq("price change recalculates the expense", asset4.dep_expense_current, Decimal("48000000"))
 finally:
-    db.rollback()
     db.close()
-    print("\ntransaction rolled back")
+    _engine.dispose()
+    print("\nprivate database discarded")
 
 
 print()

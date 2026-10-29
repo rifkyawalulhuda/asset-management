@@ -132,12 +132,109 @@ export const fetchJobs = async (site_location?: string, year_ref?: number): Prom
 }
 
 // Import Excel
-export const importExcel = async (file: File) => {
+export type ImportCounts = {
+  created: number
+  updated: number
+  unchanged: number
+  deactivated: number
+  reactivated: number
+}
+
+export type ImportSample = {
+  ax: string
+  name?: string | null
+  purchase_price?: number | null
+  dep_expense?: number | null
+  fields?: string[]
+  field_count?: number
+}
+
+export type ImportPreview = {
+  filename: string
+  file_hash: string
+  years: number[]
+  assets: ImportCounts
+  approvals: { created: number; updated: number }
+  create_samples: ImportSample[]
+  update_samples: ImportSample[]
+  deactivate_samples: ImportSample[]
+  reactivate_samples: ImportSample[]
+  warnings: string[]
+  elapsed_ms: number
+  applied?: boolean
+}
+
+export type ImportResult = {
+  applied: true
+  message: string
+  run_id: number
+  details: {
+    assets_created: number
+    assets_updated: number
+    assets_unchanged: number
+    assets_deactivated: number
+    assets_reactivated: number
+    approval_created: number
+    approval_updated: number
+  }
+  years: string | null
+  snapshot: string | null
+  elapsed_ms: number
+}
+
+const importForm = (file: File) => {
   const formData = new FormData()
   formData.append('file', file)
-  const { data } = await api.post('/import/excel', formData, {
-    headers: { 'Content-Type': 'multipart/form-data' },
+  return formData
+}
+
+/** Parse the workbook and report what would change. Writes nothing. */
+export const previewImport = async (file: File, onProgress?: (percent: number) => void): Promise<ImportPreview> => {
+  const { data } = await api.post<ImportPreview>('/import/preview', importForm(file), {
+    onUploadProgress: event => {
+      if (!event.total) return
+      onProgress?.(Math.min(100, Math.round((event.loaded / event.total) * 100)))
+    },
   })
+  return data
+}
+
+/** Apply the workbook. One transaction: either everything lands or nothing does. */
+export const applyImport = async (
+  file: File,
+  expectedHash: string,
+  onProgress?: (percent: number) => void,
+): Promise<ImportResult> => {
+  const { data } = await api.post<ImportResult>('/import/excel', importForm(file), {
+    params: { confirm: true, expected_hash: expectedHash },
+    onUploadProgress: event => {
+      if (!event.total) return
+      onProgress?.(Math.min(100, Math.round((event.loaded / event.total) * 100)))
+    },
+  })
+  return data
+}
+
+export type ImportRun = {
+  id: number
+  filename: string | null
+  file_hash: string | null
+  status: string
+  years: string | null
+  assets_created: number
+  assets_updated: number
+  assets_unchanged: number
+  assets_deactivated: number
+  assets_reactivated: number
+  approval_created: number
+  approval_updated: number
+  elapsed_ms: number | null
+  snapshot_path: string | null
+  created_at: string | null
+}
+
+export const fetchImportRuns = async (limit = 10): Promise<ImportRun[]> => {
+  const { data } = await api.get('/import/runs', { params: { limit } })
   return data
 }
 

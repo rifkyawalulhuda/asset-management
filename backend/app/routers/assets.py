@@ -81,7 +81,10 @@ def asset_meta(
     """
 
     def distinct(column) -> List[str]:
-        query = db.query(column).filter(column.isnot(None), column != "")
+        query = (
+            db.query(column)
+            .filter(column.isnot(None), column != "", FixedAsset.is_active.is_(True))
+        )
         if year_ref:
             query = query.filter(FixedAsset.year_ref == year_ref)
         rows = query.distinct().all()
@@ -105,7 +108,8 @@ def asset_neighbors(asset_key: str, db: Session = Depends(get_db)):
     """
     asset = get_asset_by_key(asset_key, db)
     base = db.query(FixedAsset.id, FixedAsset.fixed_asset_number_ax).filter(
-        FixedAsset.year_ref == asset.year_ref
+        FixedAsset.year_ref == asset.year_ref,
+        FixedAsset.is_active.is_(True),
     )
 
     def key_of(row):
@@ -134,12 +138,15 @@ def list_assets(
     site_location: Optional[str] = None,
     job: Optional[str] = None,
     search: Optional[str] = None,
+    include_inactive: bool = False,
     page: int = Query(1, ge=1),
     size: int = Query(50, ge=1, le=350),
     db: Session = Depends(get_db),
 ):
     query = db.query(FixedAsset).options(joinedload(FixedAsset.depreciation_monthly))
 
+    if not include_inactive:
+        query = query.filter(FixedAsset.is_active.is_(True))
     if year_ref:
         query = query.filter(FixedAsset.year_ref == year_ref)
     if category:
@@ -193,10 +200,23 @@ def update_asset(asset_key: str, payload: FixedAssetUpdate, db: Session = Depend
     asset = get_asset_by_key(asset_key, db)
 
     update_data = payload.model_dump(exclude_unset=True)
+
+    # Recalculating is only correct when an input the schedule depends on actually
+    # changed. Saving an edit that touched nothing but, say, Category used to
+    # rewrite the whole depreciation schedule from the purchase date and silently
+    # move the reported figures.
+    schedule_inputs = ("purchase_price", "depreciation_period_total", "purchase_date", "year_ref")
+    recalculate = any(
+        key in update_data and update_data[key] != getattr(asset, key)
+        for key in schedule_inputs
+    )
+
     for key, value in update_data.items():
         setattr(asset, key, value)
 
-    recalculate_asset(db, asset)
+    if recalculate:
+        recalculate_asset(db, asset)
+
     db.commit()
     db.refresh(asset)
     return asset

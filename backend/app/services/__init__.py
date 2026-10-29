@@ -7,6 +7,8 @@ from app.services.depreciation import (
     monthly_matches_price,
     recalculate_asset,
     recalculate_summary_fields,
+    stored_schedule,
+    year_schedule,
 )
 
 __all__ = [
@@ -18,4 +20,6 @@ __all__ = [
     "monthly_matches_price",
     "recalculate_asset",
     "recalculate_summary_fields",
+    "stored_schedule",
+    "year_schedule",
 ]

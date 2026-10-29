@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import type { ForecastAssetsResponse } from './forecastUtils'
-import { MONTH_KEYS, MONTHS, idrCell, idrCompact, idrFull } from './forecastUtils'
+import type { ExclusionReason, ForecastAssetsResponse } from './forecastUtils'
+import { MONTH_KEYS, MONTHS, exclusionBadge, idrCell, idrCompact, idrFull } from './forecastUtils'
 
 export default function AssetsGrid({
   data,
@@ -14,6 +14,7 @@ export default function AssetsGrid({
   includeExcluded,
   onIncludeExcluded,
   excludedCount,
+  excludedReasons,
 }: {
   data: ForecastAssetsResponse | undefined
   loading: boolean
@@ -26,6 +27,7 @@ export default function AssetsGrid({
   includeExcluded: boolean
   onIncludeExcluded: (value: boolean) => void
   excludedCount: number
+  excludedReasons?: Partial<Record<ExclusionReason, number>>
 }) {
   const [draft, setDraft] = useState(search)
   const firstSearch = useRef(true)
@@ -50,6 +52,13 @@ export default function AssetsGrid({
 
   const headClass = 'whitespace-nowrap px-2 py-1 text-[9.5px] font-semibold uppercase tracking-[0.06em] text-slate-500'
   const cell = 'px-2 py-[5px] text-[10.5px]'
+
+  const reasonBreakdown = excludedReasons
+    ? (Object.entries(excludedReasons) as [ExclusionReason, number][])
+        .filter(([, count]) => count > 0)
+        .map(([reason, count]) => `${count} ${exclusionBadge(reason).label}`)
+        .join(' · ')
+    : ''
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border border-slate-200 bg-white shadow-sm">
@@ -85,6 +94,11 @@ export default function AssetsGrid({
             role="switch"
             aria-checked={includeExcluded}
             onClick={() => onIncludeExcluded(!includeExcluded)}
+            title={
+              excludedCount === 0
+                ? 'Every asset in this year can be forecast'
+                : `Cannot be forecast${reasonBreakdown ? `: ${reasonBreakdown}` : ''}`
+            }
             className={`inline-flex h-7 items-center gap-1.5 rounded border px-2 text-[10.5px] font-medium transition-colors ${
               includeExcluded
                 ? 'border-amber-300 bg-amber-50 text-amber-800'
@@ -164,6 +178,7 @@ export default function AssetsGrid({
             {!loading && data?.items.map((asset, index) => {
               const excluded = Boolean(asset.excluded)
               const nonDepreciable = asset.excluded_reason === 'non_depreciable'
+              const badge = exclusionBadge(asset.excluded_reason)
               const pinnedTone = excluded ? (nonDepreciable ? 'bg-slate-50' : 'bg-amber-50') : 'bg-white'
               return (
                 <tr
@@ -181,21 +196,18 @@ export default function AssetsGrid({
                   <td className={`${cell} sticky left-[134px] z-10 border-r border-slate-100 ${pinnedTone}`}>
                     <div className="flex items-center gap-1.5">
                       <span className="truncate font-medium text-slate-800" title={asset.name}>{asset.name}</span>
-                      {excluded && (nonDepreciable ? (
+                      {excluded && (
                         <span
-                          className="shrink-0 rounded bg-slate-200 px-1 text-[9px] font-semibold uppercase text-slate-600"
-                          title="Land and construction in process do not depreciate"
+                          className={`shrink-0 rounded px-1 text-[9px] font-semibold uppercase ${
+                            nonDepreciable
+                              ? 'bg-slate-200 text-slate-600'
+                              : 'bg-amber-100 text-amber-700'
+                          }`}
+                          title={badge.title}
                         >
-                          non-depr.
+                          {badge.label}
                         </span>
-                      ) : (
-                        <span
-                          className="shrink-0 rounded bg-amber-100 px-1 text-[9px] font-semibold uppercase text-amber-700"
-                          title="Missing purchase price or depreciation period"
-                        >
-                          no data
-                        </span>
-                      ))}
+                      )}
                       {asset.is_planned && (
                         <span className="shrink-0 rounded bg-emerald-100 px-1 text-[9px] font-semibold uppercase text-emerald-700">planned</span>
                       )}

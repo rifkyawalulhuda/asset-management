@@ -60,6 +60,7 @@ export interface ForecastTotals {
   excluded_assets: number
   excluded_missing_data: number
   excluded_non_depreciable: number
+  excluded_reasons?: Partial<Record<ExclusionReason, number>>
   forecasted_assets: number
   total_purchase_price: number
   total_yearly_depreciation: number
@@ -109,6 +110,41 @@ export type PlannedPayload = {
   planned_purchase_year: number
 }
 
+/** Why an asset cannot be forecast. Mirrors `exclusion_reason()` on the server. */
+export type ExclusionReason =
+  | 'non_depreciable'
+  | 'missing_price'
+  | 'missing_period'
+  | 'missing_date'
+  | 'missing_data'
+
+/** Short badge text and the explanation shown on hover. */
+export const EXCLUSION_BADGE: Record<ExclusionReason, { label: string; title: string }> = {
+  non_depreciable: {
+    label: 'non-depr.',
+    title: 'Land and construction in process do not depreciate, so there is nothing to forecast.',
+  },
+  missing_price: {
+    label: 'no price',
+    title: 'Purchase price is empty — set it to include this asset in the forecast.',
+  },
+  missing_period: {
+    label: 'no life',
+    title: 'Useful life (depreciation period) is empty — set it to include this asset in the forecast.',
+  },
+  missing_date: {
+    label: 'no date',
+    title: 'Purchase date is empty. The base year uses the recorded figures, but any later year has to be projected from this date.',
+  },
+  missing_data: {
+    label: 'no data',
+    title: 'The asset cannot be projected from its current inputs.',
+  },
+}
+
+export const exclusionBadge = (reason: ExclusionReason | undefined) =>
+  EXCLUSION_BADGE[reason ?? 'missing_data'] ?? EXCLUSION_BADGE.missing_data
+
 export interface ForecastAsset {
   id: number
   fixed_asset_number_ax: string | null
@@ -128,7 +164,7 @@ export interface ForecastAsset {
   total_year: number
   months: Record<string, number>
   excluded?: boolean
-  excluded_reason?: 'non_depreciable' | 'missing_data'
+  excluded_reason?: ExclusionReason
   is_planned?: boolean
 }
 

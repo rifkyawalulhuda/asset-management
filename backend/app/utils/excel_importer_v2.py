@@ -55,6 +55,23 @@ def to_date(value) -> Optional[date]:
         return value.date()
     if isinstance(value, date):
         return value
+    # Workbooks re-saved by other tools, and CSV exports, often keep dates as
+    # text. Returning None here would silently wipe the purchase date — and with
+    # it the whole depreciation schedule — on the next import.
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        for pattern in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%m/%d/%Y", "%Y/%m/%d"):
+            try:
+                return datetime.strptime(text, pattern).date()
+            except ValueError:
+                continue
+        try:
+            parsed = datetime.fromisoformat(text)
+        except ValueError:
+            return None
+        return parsed.date()
     return None
 
 
@@ -324,16 +341,18 @@ def resolve_monthly_cols(sub_row: tuple, jan_col: int) -> dict:
 # Main importer
 # ---------------------------------------------------------------------------
 
-def import_fa_sheet(ws, year_ref: int, db: Session) -> int:
-    """
-    Auto-detect format and import assets from a FA sheet.
-    Returns count of upserted rows.
+def parse_fa_sheet(ws, year_ref: int):
+    """Parse a FA_<year> sheet into rows without touching the database.
+
+    Returns (parsed, has_category) where parsed maps AX number to
+    (column values, monthly amounts). Kept free of DB work so the same parse
+    result can back a preview and the real import.
     """
     # 1. Find header row
     header_row_idx = detect_header_row(ws)
     if header_row_idx == -1:
         print(f"  WARNING: Could not detect header row in sheet. Skipping.")
-        return 0
+        return {}, False
 
     sub_row_idx = header_row_idx + 1
     data_start_row = header_row_idx + 3  # skip header, sub-header, formula row
@@ -467,66 +486,11 @@ def import_fa_sheet(ws, year_ref: int, db: Session) -> int:
         # Same AX twice in one file: the last occurrence wins (never insert twice).
         parsed[ax_no] = (data, months)
 
-    if not parsed:
-        return 0
-
-    # ---- Phase 2: load every existing asset in a handful of queries --------
-    existing_by_ax: dict[str, FixedAsset] = {}
-    for chunk in _chunks(list(parsed.keys()), 1000):
-        rows_found = db.query(FixedAsset).filter(
-            FixedAsset.year_ref == year_ref,
-            FixedAsset.fixed_asset_number_ax.in_(chunk),
-        )
-        for asset in rows_found:
-            existing_by_ax[asset.fixed_asset_number_ax] = asset
-
-    # ---- Phase 3: upsert assets (single flush for the new ones) ------------
-    touched: list[FixedAsset] = []
-    created: list[FixedAsset] = []
-
-    for ax_no, (data, _) in parsed.items():
-        asset = existing_by_ax.get(ax_no)
-        if asset is not None:
-            for key, value in data.items():
-                # Preserve existing category if new file has no Category column
-                if key == 'category' and not has_category and asset.category:
-                    continue
-                setattr(asset, key, value)
-        else:
-            asset = FixedAsset(**data)
-            db.add(asset)
-            created.append(asset)
-            existing_by_ax[ax_no] = asset
-        touched.append(asset)
-
-    if created:
-        db.flush()  # assigns every primary key in one round-trip
-
-    # ---- Phase 4: replace monthly rows in bulk -----------------------------
-    for chunk in _chunks([asset.id for asset in touched], 1000):
-        db.query(DepreciationMonthly).filter(
-            DepreciationMonthly.asset_id.in_(chunk),
-            DepreciationMonthly.year == year_ref,
-        ).delete(synchronize_session=False)
-
-    monthly_rows = [
-        DepreciationMonthly(
-            asset_id=existing_by_ax[ax_no].id,
-            year=year_ref,
-            month=month,
-            amount=amount,
-        )
-        for ax_no, (_, months) in parsed.items()
-        for month, amount in months
-    ]
-    if monthly_rows:
-        db.bulk_save_objects(monthly_rows)
-
-    return len(parsed)
+    return parsed, has_category
 
 
-def import_approval_sheet(ws, year_ref: int, db: Session) -> int:
-    """Import acquisition/disposal/transfer rows from a 'List Approval' sheet.
+def parse_approval_sheet(ws, year_ref: int):
+    """Parse a 'List Approval' sheet into movement rows, without DB access.
 
     Column layout (0-indexed), identical in the 2025 and 2026 sheets:
       0:  No.
@@ -607,140 +571,48 @@ def import_approval_sheet(ws, year_ref: int, db: Session) -> int:
             "year_ref": year_ref,
         })
 
-    if not parsed:
-        return 0
-
-    # ---- Phase 2: resolve asset links in bulk ------------------------------
-    ax_values = sorted({
-        value
-        for item in parsed
-        for value in (item["fixed_asset_no"], item["asset_no"])
-        if value
-    })
-    asset_by_no: dict[str, int] = {}
-    for chunk in _chunks(ax_values, 1000):
-        for asset_id, ax_no in db.query(FixedAsset.id, FixedAsset.fixed_asset_number_ax).filter(
-            FixedAsset.fixed_asset_number_ax.in_(chunk)
-        ):
-            asset_by_no[ax_no] = asset_id
-        for asset_id, asset_no in db.query(FixedAsset.id, FixedAsset.asset_no).filter(
-            FixedAsset.asset_no.in_(chunk)
-        ):
-            asset_by_no.setdefault(asset_no, asset_id)
-
-    # ---- Phase 3: upsert by (year, asset, batch, type) ---------------------
-    existing: dict[tuple, AcquisitionDisposal] = {}
-    for record in db.query(AcquisitionDisposal).filter(
-        AcquisitionDisposal.year_ref == year_ref
-    ):
-        existing[
-            approval_key(
-                record.year_ref,
-                record.fixed_asset_no,
-                record.asset_name,
-                record.bookslip_no,
-                record.application,
-                # Normalise on the way in too, so a legacy row whose status is
-                # still "Disposals" is updated instead of duplicated.
-                normalize_approval_type(record.status, record.application),
-            )
-        ] = record
-
-    written = 0
-    for item in parsed:
-        key = approval_key(
-            item["year_ref"],
-            item["fixed_asset_no"],
-            item["asset_name"],
-            item["bookslip_no"],
-            item["application"],
-            item["status"],
-        )
-        asset_id = (
-            asset_by_no.get(item["fixed_asset_no"] or "")
-            or asset_by_no.get(item["asset_no"] or "")
-        )
-
-        record = existing.get(key)
-        if record is None:
-            record = AcquisitionDisposal(asset_id=asset_id, **{
-                k: v for k, v in item.items() if k != "asset_no"
-            })
-            db.add(record)
-            existing[key] = record
-            written += 1
-            continue
-
-        changed = False
-        for field, value in item.items():
-            if field in ("asset_no", "year_ref"):
-                continue
-            if getattr(record, field) != value:
-                setattr(record, field, value)
-                changed = True
-        if asset_id is not None and record.asset_id != asset_id:
-            record.asset_id = asset_id
-            changed = True
-        if changed:
-            written += 1
-
-    return written
+    return parsed
 
 
 def run_import(xlsx_path: str, wb=None):
+    """Apply a workbook straight from the command line.
+
+    The web endpoint uses `app.services.import_service` directly so it can show a
+    preview first; this helper keeps the CLI usable and always applies.
     """
-    Main entry point. Accepts either a file path (str) or a pre-loaded
-    openpyxl workbook (for use from FastAPI endpoint).
-    """
+    from app.services.import_service import apply_plan, build_plan, diff_plan, fingerprint
+
     if wb is None:
         print(f"Opening: {xlsx_path}")
         wb = openpyxl.load_workbook(xlsx_path, data_only=True)
 
     print(f"Sheets: {wb.sheetnames}")
-
-    # Detect year_ref from sheet date or filename
-    year_ref = 2026  # default
-
-    # Ensure tables exist
     Base.metadata.create_all(bind=engine)
 
+    with open(xlsx_path, "rb") as handle:
+        file_hash = fingerprint(handle.read())
+
     db: Session = SessionLocal()
-    results = {}
     try:
-        # Import FA sheets
-        for sheet_name in wb.sheetnames:
-            if sheet_name.startswith('FA_'):
-                try:
-                    yr = int(sheet_name.split('_')[1])
-                except (IndexError, ValueError):
-                    yr = year_ref
-                n = import_fa_sheet(wb[sheet_name], yr, db)
-                results[sheet_name] = n
-                print(f"  {sheet_name}: {n} assets imported (year_ref={yr})")
-                db.commit()
-
-        # Import List Approval sheets only. The "Disposal 20xx" sheet is a
-        # different report (cost / acc. depreciation / NBV / proceeds) and must
-        # never be parsed with the List Approval column layout.
-        for sheet_name in wb.sheetnames:
-            sn_lower = sheet_name.lower()
-            if 'list approval' in sn_lower:
-                # Extract year from sheet name
-                import re
-                years_found = re.findall(r'20\d{2}', sheet_name)
-                yr = int(years_found[-1]) if years_found else year_ref
-                n = import_approval_sheet(wb[sheet_name], yr, db)
-                results[sheet_name] = n
-                print(f"  {sheet_name}: {n} records imported")
-                db.commit()
-
-        total_assets = sum(v for k, v in results.items() if k.startswith('FA_'))
-        print(f"\nDone. Total assets: {total_assets}")
-        return results
-
-    except Exception as e:
+        plan = build_plan(wb, os.path.basename(xlsx_path), file_hash)
+        summary = diff_plan(db, plan)
+        run = apply_plan(db, plan, summary)
+        db.commit()
+        print(
+            f"Applied run #{run.id}: {run.assets_created} new, {run.assets_updated} updated, "
+            f"{run.assets_unchanged} unchanged, {run.assets_deactivated} deactivated"
+        )
+        return {
+            "assets_created": run.assets_created,
+            "assets_updated": run.assets_updated,
+            "assets_unchanged": run.assets_unchanged,
+            "assets_deactivated": run.assets_deactivated,
+            "approval_created": run.approval_created,
+            "approval_updated": run.approval_updated,
+        }
+    except Exception as exc:
         db.rollback()
-        print(f"ERROR: {e}")
+        print(f"ERROR: {exc}")
         raise
     finally:
         db.close()

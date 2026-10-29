@@ -105,6 +105,62 @@ def build_schedule(
     )
 
 
+def stored_schedule(asset: FixedAsset, year: int) -> Optional[Schedule]:
+    """The figures already recorded for one year, when that year is the asset's own.
+
+    The current fiscal year is not a projection: its schedule was imported and
+    normalised, and that is what the register reports. Recomputing it from the
+    purchase date gave a different total for the same year, so every consumer
+    reads the recorded values instead.
+    """
+    if year != (asset.year_ref or 2026):
+        return None
+    if asset.dep_expense_current is None:
+        return None
+    # Land and construction in process carry no useful life, so they have no
+    # place in a depreciation forecast.
+    if not asset.depreciation_period_total or not asset.purchase_price:
+        return None
+
+    rows = {
+        row.month: Decimal(str(row.amount or 0))
+        for row in asset.depreciation_monthly
+        if row.year == year
+    }
+    if not rows:
+        return None
+
+    price = Decimal(str(asset.purchase_price or 0))
+    acc_curr = Decimal(str(asset.acc_depreciation_curr or 0))
+
+    def as_int(value) -> int:
+        return int(Decimal(str(value or 0)))
+
+    return Schedule(
+        monthly=Decimal(str(asset.monthly_depreciation or 0)),
+        months=tuple(rows.get(month, Decimal("0")) for month in range(1, MONTHS_IN_YEAR + 1)),
+        acc_prev=as_int(asset.dep_period_acc_prev_year),
+        acc_curr=as_int(asset.dep_period_until_year),
+        yearly=as_int(asset.dep_period_yearly),
+        remain=as_int(asset.dep_period_remain),
+        acc_dep_prev=Decimal(str(asset.acc_depreciation_prev or 0)),
+        acc_dep_curr=acc_curr,
+        dep_expense=Decimal(str(asset.dep_expense_current)),
+        nbv_prev=Decimal(str(asset.net_book_value_prev or 0)),
+        nbv_curr=max(Decimal("0"), price - acc_curr),
+    )
+
+
+def year_schedule(asset: FixedAsset, year: int) -> Optional[Schedule]:
+    """Recorded figures for the asset's own year, otherwise a projection."""
+    return stored_schedule(asset, year) or build_schedule(
+        asset.purchase_price,
+        asset.depreciation_period_total,
+        asset.purchase_date,
+        year,
+    )
+
+
 def generate_monthly_rows(db: Session, asset: FixedAsset, year_ref: int) -> None:
     """Replace the asset's monthly rows for one year.
 

@@ -39,7 +39,14 @@ def inspect(db, year: int | None):
     assets = query.all()
     monthly = load_monthly(db)
 
-    findings = {"monthly_mismatch": [], "negative_nbv": [], "fractional_months": [], "schedule_gap": []}
+    findings = {
+        "monthly_mismatch": [],
+        "negative_nbv": [],
+        "fractional_months": [],
+        "schedule_gap": [],
+        "balance_gap": [],
+        "missing_position": [],
+    }
 
     for asset in assets:
         price = asset.purchase_price
@@ -68,6 +75,19 @@ def inspect(db, year: int | None):
             stored = Decimal(str(asset.dep_expense_current))
             if abs(total - stored) > CENT:
                 findings["schedule_gap"].append((asset, stored, total))
+
+        # An asset with a cost but no accumulated depreciation and no carrying
+        # value cannot be reconciled: cost - 0 should equal the NBV.
+        if price and asset.net_book_value_curr is not None:
+            acc = Decimal(str(asset.acc_depreciation_curr or 0))
+            nbv = Decimal(str(asset.net_book_value_curr))
+            if abs((Decimal(str(price)) - acc) - nbv) > CENT:
+                findings["balance_gap"].append((asset, Decimal(str(price)) - acc, nbv))
+
+        # Depreciable assets must carry a position; a missing figure means the
+        # workbook row was never filled in.
+        if price and period and asset.acc_depreciation_curr is None:
+            findings["missing_position"].append(asset)
 
     return assets, findings
 
@@ -99,6 +119,20 @@ def report(findings) -> None:
     print(f"  {len(findings['schedule_gap'])} assets")
     for asset, stored, total in findings["schedule_gap"][:10]:
         print(f"  {asset.fixed_asset_number_ax:12} y{asset.year_ref} stored={stored:,.2f} rows={total:,.2f} gap={total - stored:,.2f}")
+
+    print("\n== cost - acc. depreciation != net book value ==")
+    print(f"  {len(findings['balance_gap'])} assets")
+    for asset, expected, actual in findings["balance_gap"][:10]:
+        print(
+            f"  {asset.fixed_asset_number_ax:12} y{asset.year_ref} "
+            f"cost-acc={expected:,.2f} nbv={actual:,.2f} gap={expected - actual:,.2f} "
+            f"group={asset.group_name or '-'}"
+        )
+
+    print("\n== depreciable assets with no accumulated depreciation ==")
+    print(f"  {len(findings['missing_position'])} assets")
+    for asset in findings["missing_position"][:10]:
+        print(f"  {asset.fixed_asset_number_ax:12} y{asset.year_ref} price={asset.purchase_price} group={asset.group_name or '-'}")
 
 
 def repair_monthly(db, findings) -> int:
