@@ -159,11 +159,11 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 cd E:\Github\asset-management\frontend
 npm run dev    # http://localhost:5173
 # atau serve dist:
-serve -s dist -l 3000
+serve -s dist -l 3100
 ```
 
 **Access:**
-- Frontend: http://localhost:3000 (serve) atau http://localhost:5173 (dev)
+- Frontend: http://localhost:3100 (serve) atau http://localhost:5173 (dev)
 - API: http://localhost:8000
 - Swagger docs: http://localhost:8000/docs
 
@@ -454,7 +454,7 @@ Styling: bold headers, fill colors, auto column width, freeze row 1, number form
 - **5436: `asset-depre-db-1`** ← project ini (Docker)
 - **5432: PostgreSQL native** ← jika deploy tanpa Docker
 - 8000: FastAPI backend
-- 3000: serve (production frontend)
+- 3100: serve (production frontend)
 - 5173: Vite dev server
 
 ---

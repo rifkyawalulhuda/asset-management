@@ -18,7 +18,7 @@ echo.
 timeout /t 3 /nobreak >nul
 
 :: ── Step 2: Build & Serve Frontend ───────────────────────────────────────────
-echo [2/2] Starting Frontend (port 3000)...
+echo [2/2] Starting Frontend (port 3100)...
 
 :: Check if 'serve' is installed
 where serve >nul 2>&1
@@ -39,7 +39,7 @@ if %errorlevel% neq 0 (
 )
 cd /d "%~dp0"
 
-start "Asset Frontend" cmd /k "serve -s %~dp0frontend\dist -l 3000"
+start "Asset Frontend" cmd /k "serve -s %~dp0frontend\dist -l 3100"
 echo   OK: Frontend starting...
 echo.
 
@@ -47,7 +47,7 @@ echo.
 echo ================================================
 echo   Semua service sudah berjalan!
 echo.
-echo   Frontend  : http://localhost:3000
+echo   Frontend  : http://localhost:3100
 echo   Backend   : http://localhost:8000
 echo   API Docs  : http://localhost:8000/docs
 echo.
@@ -57,4 +57,4 @@ echo ================================================
 echo.
 echo   Tekan Enter untuk membuka browser...
 pause >nul
-start http://localhost:3000
+start http://localhost:3100

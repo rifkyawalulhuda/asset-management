@@ -315,7 +315,7 @@ Setelah mengganti konfigurasi, pastikan semua langkah ini sudah dilakukan:
 - [ ] Koneksi berhasil diverifikasi
 - [ ] `alembic upgrade head` sudah dijalankan (jika database baru)
 - [ ] Data Excel sudah di-import (jika database baru)
-- [ ] Frontend bisa mengakses backend — cek di http://localhost:3000
+- [ ] Frontend bisa mengakses backend — cek di http://localhost:3100
 
 ---
 

@@ -230,12 +230,12 @@ C:\Apps\asset-management\start-no-docker.bat
 
 | Service | URL |
 |---------|-----|
-| **Aplikasi (Frontend)** | http://localhost:3000 |
+| **Aplikasi (Frontend)** | http://localhost:3100 |
 | Backend API | http://localhost:8000 |
 | API Documentation | http://localhost:8000/docs |
 
 Jika diakses dari PC lain di jaringan, ganti `localhost` dengan IP mesin ini.
-Contoh: `http://192.168.1.100:3000`
+Contoh: `http://192.168.1.100:3100`
 
 ---
 
@@ -245,7 +245,7 @@ Buka **PowerShell as Administrator**:
 
 ```powershell
 # Izinkan port Frontend
-netsh advfirewall firewall add rule name="Asset App Frontend" dir=in action=allow protocol=TCP localport=3000
+netsh advfirewall firewall add rule name="Asset App Frontend" dir=in action=allow protocol=TCP localport=3100
 
 # Izinkan port Backend
 netsh advfirewall firewall add rule name="Asset App Backend" dir=in action=allow protocol=TCP localport=8000
@@ -365,7 +365,7 @@ C:\Apps\asset-management\
 - [ ] `frontend\.env.local` sudah dikonfigurasi dengan URL yang benar
 - [ ] `npm run build` berhasil — folder `dist\` ter-buat
 - [ ] `serve` sudah terinstall global (`npm install -g serve`)
-- [ ] `start-no-docker.bat` berjalan dan aplikasi bisa diakses di http://localhost:3000
+- [ ] `start-no-docker.bat` berjalan dan aplikasi bisa diakses di http://localhost:3100
 
 ---
 
