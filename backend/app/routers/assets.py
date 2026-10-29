@@ -68,6 +68,64 @@ def get_asset_by_key(key: str, db: Session) -> FixedAsset:
     return asset
 
 
+@router.get("/meta")
+def asset_meta(
+    year_ref: Optional[int] = None,
+    db: Session = Depends(get_db),
+):
+    """Distinct values that populate the asset form controls.
+
+    Hard-coded option lists drift away from the data (a group spelled
+    "Tools, Furniture & Fixtures" simply could not be matched by a list holding
+    "Tools Furniture Fixtures"), so the form asks the database instead.
+    """
+
+    def distinct(column) -> List[str]:
+        query = db.query(column).filter(column.isnot(None), column != "")
+        if year_ref:
+            query = query.filter(FixedAsset.year_ref == year_ref)
+        rows = query.distinct().all()
+        return sorted({str(row[0]) for row in rows}, key=str.casefold)
+
+    return {
+        "groups": distinct(FixedAsset.group_name),
+        "categories": distinct(FixedAsset.category),
+        "sites": distinct(FixedAsset.site_location),
+        "jobs": distinct(FixedAsset.job),
+        "years": [row[0] for row in db.query(FixedAsset.year_ref).distinct().order_by(FixedAsset.year_ref.desc()).all() if row[0]],
+    }
+
+
+@router.get("/{asset_key}/neighbors")
+def asset_neighbors(asset_key: str, db: Session = Depends(get_db)):
+    """Previous and next asset in the same fiscal year, ordered by sheet row.
+
+    Powers the detail page's prev/next navigation without pulling the whole
+    register down to the browser.
+    """
+    asset = get_asset_by_key(asset_key, db)
+    base = db.query(FixedAsset.id, FixedAsset.fixed_asset_number_ax).filter(
+        FixedAsset.year_ref == asset.year_ref
+    )
+
+    def key_of(row):
+        if row is None:
+            return None
+        return row.fixed_asset_number_ax or str(row.id)
+
+    previous = (
+        base.filter(FixedAsset.no < asset.no).order_by(FixedAsset.no.desc()).first()
+        if asset.no is not None
+        else None
+    )
+    following = (
+        base.filter(FixedAsset.no > asset.no).order_by(FixedAsset.no.asc()).first()
+        if asset.no is not None
+        else None
+    )
+    return {"previous": key_of(previous), "next": key_of(following)}
+
+
 @router.get("", response_model=FixedAssetListResponse)
 def list_assets(
     year_ref: Optional[int] = None,

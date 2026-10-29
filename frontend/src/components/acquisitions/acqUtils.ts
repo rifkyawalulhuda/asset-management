@@ -28,6 +28,8 @@ export type AcqRow = AcquisitionDisposal & {
 
 export type AcqFilters = {
   search: string
+  /** Exact asset number, used when arriving from an asset page. */
+  asset: string
   types: AcquisitionType[]
   from: string
   to: string
@@ -38,6 +40,7 @@ export type AcqFilters = {
 
 export const EMPTY_FILTERS: AcqFilters = {
   search: '',
+  asset: '',
   types: [],
   from: '',
   to: '',

@@ -1,386 +1,369 @@
 import { useEffect, useMemo } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { z } from 'zod'
-import { fetchAsset, createAsset, updateAsset } from '../services/assets'
+import { fetchAsset, createAsset, updateAsset, fetchAssetMeta } from '../services/assets'
+import { Field, Section } from '../components/asset/formControls'
+import { AREA, FIELD } from '../components/asset/fieldStyles'
+import DepPreview from '../components/asset/DepPreview'
+import { calcDepreciation } from '../components/asset/depCalc'
+import {
+  EMPTY_FORM,
+  assetSchema,
+  toFormValues,
+  type AssetFormValues,
+} from '../components/asset/assetFormSchema'
+import { apiErrorMessage } from '../utils/apiError'
+import { idrCompact } from '../utils/currency'
 
-// ── helpers ──────────────────────────────────────────────────────────────────
-function idr(v: number | null | undefined) {
-  if (v == null || v === 0) return '—'
-  return 'Rp ' + new Intl.NumberFormat('id-ID').format(Math.round(v))
+const withCurrent = (options: string[] | undefined, current: string) => {
+  const list = options ?? []
+  if (!current || list.includes(current)) return list
+  return [current, ...list]
 }
-function num(v: number | null | undefined) {
-  if (v == null) return '—'
-  return String(Math.round(v))
-}
-
-/** months elapsed from purchase_date up to end of target_month/year (inclusive) */
-function monthsElapsed(purchaseDate: Date, targetYear: number, targetMonth: number): number {
-  const sy = purchaseDate.getFullYear()
-  const sm = purchaseDate.getMonth() + 1 // 1-indexed
-  const elapsed = (targetYear - sy) * 12 + (targetMonth - sm) + 1
-  return Math.max(0, elapsed)
-}
-
-interface DepCalc {
-  monthly: number
-  accPrev: number
-  yearly: number
-  untilYear: number
-  remain: number
-  accDepPrev: number
-  nbvPrev: number
-  depExpCurrent: number
-  accDepCurr: number
-  nbvCurr: number
-}
-
-function calcDepreciation(
-  purchasePrice: number,
-  periodTotal: number,
-  purchaseDateStr: string | null | undefined,
-  yearRef: number
-): DepCalc | null {
-  if (!purchasePrice || !periodTotal || periodTotal <= 0) return null
-  const monthly = purchasePrice / periodTotal
-
-  let accPrev = 0, yearly = 0, untilYear = 0, remain = 0
-  if (purchaseDateStr) {
-    const pd = new Date(purchaseDateStr)
-    if (!isNaN(pd.getTime())) {
-      const prevYear = yearRef - 1
-      const ap = Math.min(monthsElapsed(pd, prevYear, 12), periodTotal)
-      const ae = Math.min(monthsElapsed(pd, yearRef, 12), periodTotal)
-      accPrev   = ap
-      yearly    = Math.max(0, ae - ap)
-      untilYear = ae
-      remain    = Math.max(0, periodTotal - ae)
-    }
-  }
-
-  const accDepPrev    = monthly * accPrev
-  const accDepCurr    = monthly * untilYear
-  const nbvPrev       = Math.max(0, purchasePrice - accDepPrev)
-  const depExpCurrent = monthly * yearly
-  const nbvCurr       = Math.max(0, purchasePrice - accDepCurr)
-
-  return { monthly, accPrev, yearly, untilYear, remain, accDepPrev, nbvPrev, depExpCurrent, accDepCurr, nbvCurr }
-}
-
-const schema = z.object({
-  asset_no: z.string().min(1, 'Asset No is required'),
-  name: z.string().min(1, 'Name is required'),
-  site_location: z.string().optional().nullable(),
-  job: z.string().optional().nullable(),
-  account_no: z.coerce.number().optional().nullable(),
-  category: z.string().optional().nullable(),
-  fixed_asset_number_ax: z.string().optional().nullable(),
-  purchase_date: z.string().optional().nullable(),
-  group_name: z.string().optional().nullable(),
-  voucher_no: z.string().optional().nullable(),
-  maker_type_location: z.string().optional().nullable(),
-  capacity_size_user: z.string().optional().nullable(),
-  year: z.coerce.number().optional().nullable(),
-  police_no: z.string().optional().nullable(),
-  machine_no: z.string().optional().nullable(),
-  chasis_no: z.string().optional().nullable(),
-  quantity: z.coerce.number().optional().nullable(),
-  valas: z.string().optional().nullable(),
-  purchase_price: z.coerce.number().optional().nullable(),
-  depreciation_period_total: z.coerce.number().optional().nullable(),
-  photo_status: z.string().optional().nullable(),
-  condition: z.string().optional().nullable(),
-  remark: z.string().optional().nullable(),
-  year_ref: z.coerce.number().default(2026),
-})
-
-type FormData = z.infer<typeof schema>
-
-const GROUPS = ['Building', 'Structures', 'Machinary and Equipment', 'Tools Furniture Fixtures', 'Vehicles']
-const CATEGORIES = ['WH1', 'WH2', 'TRP', 'BALI', 'MDN', 'PBG', 'MKS', 'SBY', 'OTHERS']
 
 export default function AssetForm() {
   const { id } = useParams<{ id: string }>()
-  const isEdit = !!id
+  const isEdit = Boolean(id)
   const navigate = useNavigate()
   const qc = useQueryClient()
 
-  const { data: asset } = useQuery({
+  const { data: asset, isPending: loadingAsset } = useQuery({
     queryKey: ['asset', id],
     queryFn: () => fetchAsset(id!),
     enabled: isEdit,
   })
 
-  const { register, handleSubmit, reset, watch, formState: { errors } } = useForm<FormData>({
-    resolver: zodResolver(schema),
-    defaultValues: { year_ref: 2026 },
+  // Option lists come from the database: a hard-coded list could not represent
+  // values such as "Tools, Furniture & Fixtures" and silently blanked the field.
+  const { data: meta } = useQuery({
+    queryKey: ['asset-meta'],
+    queryFn: () => fetchAssetMeta(),
+    staleTime: 300_000,
   })
 
-  // Realtime depreciation preview
-  const [watchPrice, watchPeriod, watchPurchaseDate, watchYearRef] = watch([
-    'purchase_price', 'depreciation_period_total', 'purchase_date', 'year_ref'
-  ])
-  const depPreview = useMemo(() =>
-    calcDepreciation(
-      Number(watchPrice) || 0,
-      Number(watchPeriod) || 0,
-      watchPurchaseDate as string | null,
-      Number(watchYearRef) || 2026
-    ),
-    [watchPrice, watchPeriod, watchPurchaseDate, watchYearRef]
-  )
+  const {
+    register,
+    handleSubmit,
+    reset,
+    watch,
+    formState: { errors, isDirty, isSubmitting },
+  } = useForm<AssetFormValues>({
+    resolver: zodResolver(assetSchema),
+    defaultValues: EMPTY_FORM,
+    mode: 'onBlur',
+  })
 
   useEffect(() => {
-    if (asset) {
-      reset({
-        ...asset,
-        purchase_date: asset.purchase_date ? asset.purchase_date.split('T')[0] : '',
-      })
-    }
+    if (asset) reset(toFormValues(asset as unknown as Record<string, unknown>))
   }, [asset, reset])
+
+  useEffect(() => {
+    if (isEdit || !meta?.years?.length) return
+    reset(current => ({ ...current, year_ref: String(meta.years[0]) }))
+  }, [isEdit, meta, reset])
+
+  // Warn before the tab closes with unsaved edits.
+  useEffect(() => {
+    if (!isDirty) return
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault()
+      event.returnValue = ''
+    }
+    window.addEventListener('beforeunload', onBeforeUnload)
+    return () => window.removeEventListener('beforeunload', onBeforeUnload)
+  }, [isDirty])
+
+  const values = watch()
+  const preview = useMemo(
+    () => calcDepreciation(
+      Number(values.purchase_price) || 0,
+      Number(values.depreciation_period_total) || 0,
+      values.purchase_date || null,
+      Number(values.year_ref) || 2026,
+    ),
+    [values.purchase_price, values.depreciation_period_total, values.purchase_date, values.year_ref],
+  )
 
   const createMut = useMutation({
     mutationFn: createAsset,
-    onSuccess: (data) => {
+    onSuccess: data => {
       qc.invalidateQueries({ queryKey: ['assets'] })
-      const key = data.fixed_asset_number_ax || String(data.id)
-      navigate(`/assets/${key}`)
+      qc.invalidateQueries({ queryKey: ['summary-totals'] })
+      navigate(`/assets/${data.fixed_asset_number_ax || data.id}`)
     },
   })
 
   const updateMut = useMutation({
-    mutationFn: ({ key, data }: { key: string; data: Partial<FormData> }) => updateAsset(key, data),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['assets'] }); navigate(`/assets/${id}`) },
+    mutationFn: ({ key, data }: { key: string; data: Parameters<typeof updateAsset>[1] }) =>
+      updateAsset(key, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['assets'] })
+      qc.invalidateQueries({ queryKey: ['asset', id] })
+      qc.invalidateQueries({ queryKey: ['summary-totals'] })
+      navigate(`/assets/${id}`)
+    },
   })
 
-  const onSubmit = (data: FormData) => {
-    // Convert empty strings to null for optional fields
-    const cleaned = Object.fromEntries(
-      Object.entries(data).map(([k, v]) => [k, v === '' ? null : v])
-    )
-    if (isEdit) updateMut.mutate({ key: id!, data: cleaned })
-    else createMut.mutate(cleaned)
+  const onSubmit = (form: AssetFormValues) => {
+    const parsed = assetSchema.safeParse(form)
+    if (!parsed.success) return
+    if (isEdit) updateMut.mutate({ key: id!, data: parsed.data })
+    else createMut.mutate(parsed.data as Parameters<typeof createAsset>[0])
   }
 
-  const isLoading = createMut.isPending || updateMut.isPending
+  const saving = isSubmitting || createMut.isPending || updateMut.isPending
+  const failure = apiErrorMessage(createMut.error ?? updateMut.error)
+  const errorCount = Object.keys(errors).length
+
+  const leave = () => {
+    if (isDirty && !window.confirm('Discard unsaved changes?')) return
+    navigate(isEdit ? `/assets/${id}` : '/assets')
+  }
+
+  const groupOptions = withCurrent(meta?.groups, values.group_name)
+  const categoryOptions = withCurrent(meta?.categories, values.category)
+  const siteOptions = withCurrent(meta?.sites, values.site_location)
+  const jobOptions = withCurrent(meta?.jobs, values.job)
+  const yearOptions = useMemo(() => {
+    const years = (meta?.years ?? []).map(String)
+    const current = values.year_ref
+    return current && !years.includes(current) ? [current, ...years] : years
+  }, [meta, values.year_ref])
+
+  const price = Number(values.purchase_price) || 0
+  const period = Number(values.depreciation_period_total) || 0
 
   return (
-    <div className="max-w-4xl">
-      <div className="flex items-center gap-3 mb-6">
-        <button onClick={() => navigate(-1)} className="text-gray-400 hover:text-gray-600">← Back</button>
-        <h1 className="text-xl font-bold">{isEdit ? 'Edit Asset' : 'Add New Asset'}</h1>
+    <div className="flex h-[calc(100vh-9rem)] flex-col gap-2">
+      <div className="flex shrink-0 flex-wrap items-end justify-between gap-3">
+        <div className="min-w-0">
+          <p className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+            <Link to="/assets" className="hover:text-slate-600">Fixed assets</Link>
+            <span aria-hidden="true">/</span>
+            <span className="text-slate-500">{isEdit ? 'Edit' : 'New'}</span>
+          </p>
+          <h1 className="mt-0.5 truncate text-[19px] font-semibold leading-tight text-slate-900">
+            {isEdit ? (asset?.name ?? 'Edit asset') : 'Add new asset'}
+          </h1>
+          <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-[11.5px] text-slate-500">
+            <span>PT. Sankyu Indonesia International</span>
+            <span className="text-slate-300">·</span>
+            <span className="font-mono text-[11px]">{values.asset_no || (isEdit ? '—' : 'new record')}</span>
+            {values.fixed_asset_number_ax && values.fixed_asset_number_ax !== values.asset_no && (
+              <>
+                <span className="text-slate-300">·</span>
+                <span className="font-mono text-[11px]">{values.fixed_asset_number_ax}</span>
+              </>
+            )}
+            {price > 0 && (
+              <>
+                <span className="text-slate-300">·</span>
+                <span>{idrCompact(price)}</span>
+              </>
+            )}
+          </p>
+        </div>
       </div>
 
-      <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
-        {/* Basic Info */}
-        <Section title="Basic Information">
-          <div className="grid grid-cols-2 gap-4">
-            <Field label="Asset No *" error={errors.asset_no?.message}>
-              <input {...register('asset_no')} className="input" />
-            </Field>
-            <Field label="Fixed Asset No (AX)">
-              <input {...register('fixed_asset_number_ax')} className="input" />
-            </Field>
-            <Field label="Name *" error={errors.name?.message} className="col-span-2">
-              <input {...register('name')} className="input" />
-            </Field>
-            <Field label="Group">
-              <select {...register('group_name')} className="input">
-                <option value="">Select group...</option>
-                {GROUPS.map(g => <option key={g} value={g}>{g}</option>)}
-              </select>
-            </Field>
-            <Field label="Category">
-              <select {...register('category')} className="input">
-                <option value="">Select category...</option>
-                {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
-              </select>
-            </Field>
-            <Field label="Site/Location">
-              <input {...register('site_location')} className="input" />
-            </Field>
-            <Field label="Job">
-              <input {...register('job')} className="input" />
-            </Field>
-            <Field label="Account No">
-              <input type="number" {...register('account_no')} className="input" />
-            </Field>
-            <Field label="Voucher No">
-              <input {...register('voucher_no')} className="input" />
-            </Field>
-            <Field label="Purchase Date">
-              <input type="date" {...register('purchase_date')} className="input" />
-            </Field>
-            <Field label="Year">
-              <input type="number" {...register('year')} className="input" />
-            </Field>
-            <Field label="Year Reference">
-              <select {...register('year_ref')} className="input">
-                <option value={2026}>2026</option>
-                <option value={2025}>2025</option>
-              </select>
-            </Field>
-            <Field label="Quantity">
-              <input type="number" {...register('quantity')} className="input" />
-            </Field>
-          </div>
-        </Section>
-
-        {/* Asset Details */}
-        <Section title="Asset Details">
-          <div className="grid grid-cols-2 gap-4">
-            <Field label="Maker/Type/Location" className="col-span-2">
-              <textarea {...register('maker_type_location')} rows={2} className="input" />
-            </Field>
-            <Field label="Capacity/Size/User" className="col-span-2">
-              <textarea {...register('capacity_size_user')} rows={2} className="input" />
-            </Field>
-            <Field label="Police No">
-              <input {...register('police_no')} className="input" />
-            </Field>
-            <Field label="Machine No">
-              <input {...register('machine_no')} className="input" />
-            </Field>
-            <Field label="Chasis No">
-              <input {...register('chasis_no')} className="input" />
-            </Field>
-            <Field label="Valas (Currency)">
-              <input {...register('valas')} className="input" placeholder="e.g. USD" />
-            </Field>
-          </div>
-        </Section>
-
-        {/* Depreciation */}
-        <Section title="Depreciation">
-          <div className="grid grid-cols-2 gap-4">
-            <Field label="Purchase Price (IDR)">
-              <input type="number" step="0.01" {...register('purchase_price')} className="input" />
-            </Field>
-            <Field label="Depreciation Period (months)">
-              <input type="number" {...register('depreciation_period_total')} className="input" />
-            </Field>
-          </div>
-          <p className="text-xs text-gray-400 mt-2">Monthly depreciation will be calculated automatically.</p>
-        </Section>
-
-        {/* Depreciation Preview */}
-        <div className="bg-white border rounded-lg p-4">
-          <h2 className="font-semibold text-gray-700 mb-3 border-b pb-2 flex items-center gap-2">
-            Depreciation Preview
-            {depPreview
-              ? <span className="text-xs font-normal text-green-600 bg-green-50 px-2 py-0.5 rounded">Live</span>
-              : <span className="text-xs font-normal text-gray-400 bg-gray-100 px-2 py-0.5 rounded">Enter price &amp; period to calculate</span>
-            }
-          </h2>
-          <div className="grid grid-cols-2 gap-x-8 gap-y-1.5 text-sm">
-            {/* Monthly */}
-            <div className="col-span-2 flex justify-between py-1 border-b">
-              <span className="text-gray-500">Monthly Depreciation (b = a ÷ c)</span>
-              <span className="font-semibold text-green-700">{depPreview ? idr(depPreview.monthly) : '—'}</span>
-            </div>
-            {/* Period section */}
-            <div className="col-span-2 mt-2 mb-1 text-xs font-semibold text-gray-400 uppercase tracking-wide">Depreciation Period</div>
-            <div className="flex justify-between">
-              <span className="text-gray-500">Total Period (c)</span>
-              <span className="font-medium">{depPreview ? `${num(Number(watchPeriod))} months` : '—'}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-gray-500">Acc. Period s/d {(Number(watchYearRef) || 2026) - 1} (d)</span>
-              <span className="font-medium">{depPreview ? `${num(depPreview.accPrev)} months` : '—'}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-gray-500">Yearly {Number(watchYearRef) || 2026} (e)</span>
-              <span className="font-medium">{depPreview ? `${num(depPreview.yearly)} months` : '—'}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-gray-500">Until {Number(watchYearRef) || 2026} (f = d+e)</span>
-              <span className="font-medium">{depPreview ? `${num(depPreview.untilYear)} months` : '—'}</span>
-            </div>
-            <div className="flex justify-between col-span-2 sm:col-span-1">
-              <span className="text-gray-500">Remaining (g = c−f)</span>
-              <span className={`font-medium ${depPreview && depPreview.remain === 0 ? 'text-red-500' : ''}`}>
-                {depPreview ? `${num(depPreview.remain)} months` : '—'}
-              </span>
-            </div>
-            {/* Book value section */}
-            <div className="col-span-2 mt-2 mb-1 text-xs font-semibold text-gray-400 uppercase tracking-wide">Book Values</div>
-            <div className="flex justify-between">
-              <span className="text-gray-500">Acc. Depreciation 31 Dec {(Number(watchYearRef) || 2026) - 1} (l)</span>
-              <span className="font-medium">{depPreview ? idr(depPreview.accDepPrev) : '—'}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-gray-500">NBV 31 Dec {(Number(watchYearRef) || 2026) - 1} (m)</span>
-              <span className="font-medium">{depPreview ? idr(depPreview.nbvPrev) : '—'}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-gray-500">Dep. Expense {Number(watchYearRef) || 2026} (j)</span>
-              <span className="font-medium text-blue-700">{depPreview ? idr(depPreview.depExpCurrent) : '—'}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-gray-500">Acc. Depreciation 31 Dec {Number(watchYearRef) || 2026}</span>
-              <span className="font-medium">{depPreview ? idr(depPreview.accDepCurr) : '—'}</span>
-            </div>
-            <div className="col-span-2 flex justify-between pt-1 border-t mt-1">
-              <span className="text-gray-600 font-semibold">NBV 31 Dec {Number(watchYearRef) || 2026}</span>
-              <span className="font-bold text-blue-800 text-base">{depPreview ? idr(depPreview.nbvCurr) : '—'}</span>
-            </div>
-          </div>
-          {depPreview && !watchPurchaseDate && (
-            <p className="text-xs text-amber-600 mt-3 bg-amber-50 px-2 py-1 rounded">
-              Tambahkan Purchase Date untuk menghitung period fields secara akurat.
-            </p>
+      <form onSubmit={handleSubmit(onSubmit)} className="flex min-h-0 flex-1 flex-col gap-2" noValidate>
+        <div className="flex shrink-0 flex-wrap items-center gap-2 rounded-md border border-slate-200 bg-white px-2 py-1.5 shadow-sm">
+          {isDirty ? (
+            <span className="inline-flex items-center gap-1.5 rounded bg-amber-50 px-1.5 py-[2px] text-[10.5px] font-medium text-amber-800">
+              <span className="h-1.5 w-1.5 rounded-full bg-amber-500" aria-hidden="true" />
+              Unsaved changes
+            </span>
+          ) : (
+            <span className="text-[10.5px] text-slate-400">
+              {isEdit ? (loadingAsset ? 'Loading asset…' : 'No changes yet') : 'Fill in the required fields'}
+            </span>
           )}
-        </div>
 
-        {/* Status */}
-        <Section title="Status & Condition">
-          <div className="grid grid-cols-2 gap-4">
-            <Field label="Photo Status">
-              <select {...register('photo_status')} className="input">
-                <option value="">Select...</option>
-                <option value="Ok">Ok</option>
-                <option value="Not Ok">Not Ok</option>
-              </select>
-            </Field>
-            <Field label="Condition">
-              <input {...register('condition')} className="input" />
-            </Field>
-            <Field label="Remark" className="col-span-2">
-              <textarea {...register('remark')} rows={2} className="input" />
-            </Field>
-          </div>
-        </Section>
+          {errorCount > 0 && (
+            <span role="alert" className="rounded bg-rose-50 px-1.5 py-[2px] text-[10.5px] font-medium text-rose-700">
+              {errorCount} field{errorCount === 1 ? '' : 's'} need attention
+            </span>
+          )}
 
-        <div className="flex gap-3">
-          <button type="submit" disabled={isLoading} className="bg-blue-700 text-white px-6 py-2 rounded hover:bg-blue-800 disabled:opacity-50 font-medium">
-            {isLoading ? 'Saving...' : isEdit ? 'Update Asset' : 'Create Asset'}
-          </button>
-          <button type="button" onClick={() => navigate(-1)} className="border px-6 py-2 rounded hover:bg-gray-50">
+          <span className="ml-auto" />
+
+          <button
+            type="button"
+            onClick={leave}
+            disabled={saving}
+            className="h-7 rounded border border-slate-300 bg-white px-3 text-[11.5px] font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-50"
+          >
             Cancel
           </button>
+          <button
+            type="submit"
+            disabled={saving}
+            className="h-7 rounded bg-slate-800 px-3.5 text-[11.5px] font-semibold text-white shadow-sm transition-colors hover:bg-slate-900 disabled:opacity-50"
+          >
+            {saving ? 'Saving…' : isEdit ? 'Save changes' : 'Create asset'}
+          </button>
+        </div>
+
+        {failure && (
+          <p role="alert" className="shrink-0 rounded border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-[11px] text-rose-800">
+            Could not save: {failure}
+          </p>
+        )}
+
+        <div className="grid min-h-0 flex-1 grid-cols-1 gap-2 overflow-y-auto fx-scroll pr-0.5 xl:grid-cols-[minmax(0,1fr)_320px]">
+          <div className="space-y-2">
+            <Section title="Identification" description="How the asset is registered in the ledger">
+              <Field label="Asset No" required htmlFor="asset_no" error={errors.asset_no?.message}>
+                <input
+                  id="asset_no"
+                  {...register('asset_no')}
+                  aria-invalid={Boolean(errors.asset_no)}
+                  className={FIELD}
+                />
+              </Field>
+              <Field label="Fixed asset no (AX)" htmlFor="fixed_asset_number_ax" hint="Printed on the asset tag">
+                <input id="fixed_asset_number_ax" {...register('fixed_asset_number_ax')} className={FIELD} />
+              </Field>
+              <Field label="Name" required htmlFor="name" error={errors.name?.message} className="sm:col-span-2">
+                <input id="name" {...register('name')} aria-invalid={Boolean(errors.name)} className={FIELD} />
+              </Field>
+              <Field label="Asset group" htmlFor="group_name" hint="Type to filter existing groups">
+                <input id="group_name" list="asset-groups" {...register('group_name')} className={FIELD} />
+                <datalist id="asset-groups">
+                  {groupOptions.map(option => <option key={option} value={option} />)}
+                </datalist>
+              </Field>
+              <Field label="Category" htmlFor="category">
+                <input id="category" list="asset-categories" {...register('category')} className={FIELD} />
+                <datalist id="asset-categories">
+                  {categoryOptions.map(option => <option key={option} value={option} />)}
+                </datalist>
+              </Field>
+              <Field label="Site / location" htmlFor="site_location">
+                <input id="site_location" list="asset-sites" {...register('site_location')} className={FIELD} />
+                <datalist id="asset-sites">
+                  {siteOptions.map(option => <option key={option} value={option} />)}
+                </datalist>
+              </Field>
+              <Field label="Job" htmlFor="job">
+                <input id="job" list="asset-jobs" {...register('job')} className={FIELD} />
+                <datalist id="asset-jobs">
+                  {jobOptions.map(option => <option key={option} value={option} />)}
+                </datalist>
+              </Field>
+            </Section>
+
+            <Section title="Accounting" description="Document references and the fiscal year this row belongs to">
+              <Field label="Account no" htmlFor="account_no" error={errors.account_no?.message}>
+                <input id="account_no" type="number" {...register('account_no')} className={FIELD} />
+              </Field>
+              <Field label="Voucher no" htmlFor="voucher_no">
+                <input id="voucher_no" {...register('voucher_no')} className={FIELD} />
+              </Field>
+              <Field label="Purchase date" htmlFor="purchase_date" hint="Drives the whole schedule">
+                <input id="purchase_date" type="date" {...register('purchase_date')} className={FIELD} />
+              </Field>
+              <Field label="Year" htmlFor="year" error={errors.year?.message}>
+                <input id="year" type="number" {...register('year')} className={FIELD} />
+              </Field>
+              <Field
+                label="Fiscal year (year ref)"
+                htmlFor="year_ref"
+                error={errors.year_ref?.message}
+                hint="Which reporting year this row belongs to"
+              >
+                <select id="year_ref" {...register('year_ref')} className={FIELD}>
+                  {yearOptions.map(option => <option key={option} value={option}>{option}</option>)}
+                </select>
+              </Field>
+              <Field label="Quantity" htmlFor="quantity" error={errors.quantity?.message}>
+                <input id="quantity" type="number" {...register('quantity')} className={FIELD} />
+              </Field>
+            </Section>
+
+            <Section title="Depreciation" description="Straight-line over the useful life">
+              <Field
+                label="Purchase price (IDR)"
+                htmlFor="purchase_price"
+                error={errors.purchase_price?.message}
+                hint={price > 0 ? idrCompact(price) : 'Leave empty if not yet valued'}
+              >
+                <input
+                  id="purchase_price"
+                  type="number"
+                  step="0.01"
+                  inputMode="decimal"
+                  {...register('purchase_price')}
+                  aria-invalid={Boolean(errors.purchase_price)}
+                  className={FIELD}
+                />
+              </Field>
+              <Field
+                label="Useful life (months)"
+                htmlFor="depreciation_period_total"
+                error={errors.depreciation_period_total?.message}
+                hint={period > 0 ? `${(period / 12).toFixed(1)} years` : 'Leave empty for non-depreciable assets'}
+              >
+                <input
+                  id="depreciation_period_total"
+                  type="number"
+                  {...register('depreciation_period_total')}
+                  aria-invalid={Boolean(errors.depreciation_period_total)}
+                  className={FIELD}
+                />
+              </Field>
+            </Section>
+
+            <Section title="Specification" description="Identification of the physical item">
+              <Field label="Maker / type / location" htmlFor="maker_type_location" className="sm:col-span-2">
+                <textarea id="maker_type_location" rows={2} {...register('maker_type_location')} className={AREA} />
+              </Field>
+              <Field label="Capacity / size / user" htmlFor="capacity_size_user" className="sm:col-span-2">
+                <textarea id="capacity_size_user" rows={2} {...register('capacity_size_user')} className={AREA} />
+              </Field>
+              <Field label="Police no" htmlFor="police_no">
+                <input id="police_no" {...register('police_no')} className={FIELD} />
+              </Field>
+              <Field label="Machine no" htmlFor="machine_no">
+                <input id="machine_no" {...register('machine_no')} className={FIELD} />
+              </Field>
+              <Field label="Chasis no" htmlFor="chasis_no">
+                <input id="chasis_no" {...register('chasis_no')} className={FIELD} />
+              </Field>
+              <Field label="Currency (valas)" htmlFor="valas" hint="e.g. USD">
+                <input id="valas" {...register('valas')} className={FIELD} />
+              </Field>
+            </Section>
+
+            <Section title="Status & condition" description="Condition reporting used by the audit">
+              <Field label="Photo status" htmlFor="photo_status">
+                <select id="photo_status" {...register('photo_status')} className={FIELD}>
+                  <option value="">Not set</option>
+                  <option value="Ok">Ok</option>
+                  <option value="Not Ok">Not Ok</option>
+                </select>
+              </Field>
+              <Field label="Condition" htmlFor="condition">
+                <input id="condition" {...register('condition')} className={FIELD} />
+              </Field>
+              <Field label="Remark" htmlFor="remark" className="sm:col-span-2">
+                <textarea id="remark" rows={2} {...register('remark')} className={AREA} />
+              </Field>
+            </Section>
+          </div>
+
+          <aside className="self-start xl:sticky xl:top-0">
+            <DepPreview
+              preview={preview}
+              year={Number(values.year_ref) || 2026}
+              purchaseDate={values.purchase_date}
+              hasPrice={price > 0}
+              hasPeriod={period > 0}
+            />
+          </aside>
         </div>
       </form>
-    </div>
-  )
-}
-
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div className="bg-white border rounded-lg p-4">
-      <h2 className="font-semibold text-gray-700 mb-4 border-b pb-2">{title}</h2>
-      {children}
-    </div>
-  )
-}
-
-function Field({ label, error, children, className }: { label: string; error?: string; children: React.ReactNode; className?: string }) {
-  return (
-    <div className={className}>
-      <label className="block text-sm text-gray-600 mb-1">{label}</label>
-      {children}
-      {error && <p className="text-xs text-red-500 mt-1">{error}</p>}
     </div>
   )
 }

@@ -26,8 +26,32 @@ export const deleteAsset = async (id: number): Promise<void> => {
   await api.delete(`/assets/${id}`)
 }
 
+/** Distinct values used by the asset form controls. */
+export const fetchAssetMeta = async (year_ref?: number) => {
+  const { data } = await api.get('/assets/meta', { params: year_ref ? { year_ref } : {} })
+  return data as {
+    groups: string[]
+    categories: string[]
+    sites: string[]
+    jobs: string[]
+    years: number[]
+  }
+}
+
+/** Previous and next asset in the same fiscal year. */
+export const fetchAssetNeighbors = async (key: string) => {
+  const { data } = await api.get(`/assets/${key}/neighbors`)
+  return data as { previous: string | null; next: string | null }
+}
+
 // Acquisitions
-export const fetchAcquisitions = async (params?: { year_ref?: number; status?: string }): Promise<AcquisitionDisposal[]> => {
+export const fetchAcquisitions = async (params?: {
+  year_ref?: number
+  status?: string
+  asset_id?: number
+  /** Comma-separated asset numbers, matched against `fixed_asset_no`. */
+  asset_no?: string
+}): Promise<AcquisitionDisposal[]> => {
   const { data } = await api.get('/acquisitions', { params })
   return data
 }

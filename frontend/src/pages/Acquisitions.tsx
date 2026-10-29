@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { createAcquisition, deleteAcquisition, fetchAcquisitions, updateAcquisition } from '../services/assets'
 import { formatDate } from '../utils/format'
@@ -45,8 +46,25 @@ function TrashIcon() {
 
 export default function Acquisitions() {
   const qc = useQueryClient()
-  const [year, setYear] = useState(CURRENT_YEAR)
-  const [filters, setFilters] = useState<AcqFilters>(EMPTY_FILTERS)
+  const [params, setParams] = useSearchParams()
+
+  // An asset page links here with ?year=&asset=, so the movement it belongs to is
+  // already isolated instead of being buried in the whole fiscal year.
+  const [seed] = useState(() => {
+    const requestedYear = Number(params.get('year'))
+    return {
+      year: Number.isFinite(requestedYear) && requestedYear > 2000 ? requestedYear : CURRENT_YEAR,
+      asset: (params.get('asset') ?? '').trim(),
+    }
+  })
+
+  const years = useMemo(
+    () => (YEARS.includes(seed.year) ? YEARS : [seed.year, ...YEARS]),
+    [seed.year],
+  )
+
+  const [year, setYear] = useState(seed.year)
+  const [filters, setFilters] = useState<AcqFilters>({ ...EMPTY_FILTERS, asset: seed.asset })
   const [sort, setSort] = useState<SortState>({ key: 'date', dir: 'desc' })
   const [chartMode, setChartMode] = useState<'count' | 'value'>('count')
   const [grouped, setGrouped] = useState(true)
@@ -144,6 +162,7 @@ export default function Acquisitions() {
   const filtered = useMemo(() => {
     return allRows.filter(row => {
       if (pendingIds.has(row.id)) return false
+      if (filters.asset && row.fixed_asset_no !== filters.asset) return false
       if (filters.types.length && !filters.types.includes(row.type)) return false
       if (filters.site && row.site !== filters.site) return false
       if (filters.job && row.job !== filters.job) return false
@@ -191,6 +210,7 @@ export default function Acquisitions() {
 
   const hasFilters =
     filters.search !== '' ||
+    filters.asset !== '' ||
     filters.types.length > 0 ||
     filters.from !== '' ||
     filters.to !== '' ||
@@ -203,6 +223,22 @@ export default function Acquisitions() {
   const clearFilters = () => {
     setFilters(EMPTY_FILTERS)
     setSelected(new Set())
+    if (params.has('asset')) {
+      setParams(previous => {
+        const next = new URLSearchParams(previous)
+        next.delete('asset')
+        return next
+      }, { replace: true })
+    }
+  }
+
+  const clearAssetFilter = () => {
+    setFilters(current => ({ ...current, asset: '' }))
+    setParams(previous => {
+      const next = new URLSearchParams(previous)
+      next.delete('asset')
+      return next
+    }, { replace: true })
   }
 
   const toggleSelect = (id: number) => {
@@ -342,10 +378,20 @@ export default function Acquisitions() {
         filters={filters}
         onChange={patchFilters}
         year={year}
-        years={YEARS}
+        years={years}
         onYear={value => {
           setYear(value)
           setSelected(new Set())
+          // The asset filter belongs to one fiscal year; keeping it would show an
+          // empty table for no visible reason. One URL update does both, because
+          // two sequential writes in the same handler do not compose.
+          if (filters.asset) setFilters(current => ({ ...current, asset: '' }))
+          setParams(previous => {
+            const next = new URLSearchParams(previous)
+            next.delete('asset')
+            next.set('year', String(value))
+            return next
+          }, { replace: true })
         }}
         sites={sites}
         jobs={jobs}
@@ -354,6 +400,7 @@ export default function Acquisitions() {
         grouped={grouped}
         onGrouped={setGrouped}
         onClear={clearFilters}
+        onClearAsset={clearAssetFilter}
         hasFilters={hasFilters}
       />
 

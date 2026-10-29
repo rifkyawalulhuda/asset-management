@@ -25,6 +25,7 @@ export default function AcqToolbar({
   grouped,
   onGrouped,
   onClear,
+  onClearAsset,
   hasFilters,
 }: {
   filters: AcqFilters
@@ -39,6 +40,7 @@ export default function AcqToolbar({
   grouped: boolean
   onGrouped: (value: boolean) => void
   onClear: () => void
+  onClearAsset: () => void
   hasFilters: boolean
 }) {
   const toggleType = (type: AcquisitionType) => {
@@ -63,6 +65,21 @@ export default function AcqToolbar({
           className="h-7 w-56 rounded border border-slate-300 pl-7 pr-2 text-[11.5px] text-slate-800 placeholder:text-slate-400 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
         />
       </div>
+
+      {filters.asset && (
+        <span className="inline-flex items-center gap-1 rounded border border-slate-400 bg-slate-100 px-1.5 py-[2px] text-[10.5px] text-slate-800">
+          <span className="text-slate-500">Asset</span>
+          <span className="font-mono text-[10.5px] font-medium">{filters.asset}</span>
+          <button
+            type="button"
+            onClick={onClearAsset}
+            aria-label={`Remove asset filter ${filters.asset}`}
+            className="ml-0.5 text-slate-400 hover:text-slate-700"
+          >
+            ×
+          </button>
+        </span>
+      )}
 
       <span className="mx-1 h-5 w-px bg-slate-200" />
 
