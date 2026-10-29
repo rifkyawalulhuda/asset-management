@@ -13,8 +13,7 @@ import {
   COLUMNS,
   DEFAULT_WIDTH,
   HEAD_BLOCKS,
-  HEAD_TONE,
-  ROW3_SPANNED,
+  TONE_STYLE,
   blockLabel,
   headText,
 } from '../components/table/columns'
@@ -29,10 +28,10 @@ import type { AssetFilters, FixedAsset } from '../types'
 /* ── Metrics ────────────────────────────────────────────────────────────────── */
 
 const SELECT_W = 34
-const ROW1_H = 48
-const ROW2_H = 58
-const ROW3_H = 28
-const HEADER_H = ROW1_H + ROW2_H + ROW3_H
+const ROW1_H = 28
+const ROW2_H = 48
+const ROW3_H = 24
+const HEADER_H = ROW1_H + ROW2_H
 const MIN_W = 40
 const MAX_W = 600
 
@@ -189,26 +188,41 @@ function LeafHead({
   onResize,
 }: LeafHeadProps) {
   const def = COL_BY_KEY[colKey]
+  const tone = TONE_STYLE[def.tone]
   const direction = sort?.key === colKey ? sort.dir : 'none'
+  const sorted = direction !== 'none'
   const ariaSort = direction === 'none' ? 'none' : direction === 'asc' ? 'ascending' : 'descending'
   const label = headText(colKey, year)
+  const tooltip = def.formula
+    ? `${def.label} — ${def.formula}`
+    : def.label
 
   return (
     <th
       scope="col"
       rowSpan={rowSpan}
       aria-sort={ariaSort}
-      title={label.replace(/\n/g, ' ')}
-      style={{ top: stickyTop, height: rowSpan === 3 ? HEADER_H : rowSpan === 2 ? ROW1_H + ROW2_H : ROW2_H }}
-      className={`sticky z-20 border-b border-r border-white/15 px-1 py-1 align-middle text-center text-white ${HEAD_TONE[def.tone]}`}
+      title={tooltip}
+      style={{ top: stickyTop, height: rowSpan > 1 ? HEADER_H : ROW2_H }}
+      className={`group/head sticky z-20 border-b-2 border-r border-slate-200 px-1 align-middle text-center ${tone.leaf} ${
+        sorted ? 'bg-slate-50' : 'bg-white'
+      }`}
     >
       <button
         type="button"
         onClick={() => onSort(colKey)}
-        className="mx-auto inline-flex max-w-full items-center justify-center gap-1 rounded-sm px-1 py-0.5 text-[10.5px] font-semibold leading-[1.2] tracking-[0.01em] transition-colors hover:bg-white/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80"
+        className={`mx-auto inline-flex max-w-full items-center justify-center gap-1 rounded px-1.5 py-1 text-[11px] font-semibold leading-[1.25] transition-colors hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 ${
+          sorted ? 'text-slate-900' : 'text-slate-700'
+        } ${def.filter ? 'pr-4' : ''}`}
       >
         <span className="whitespace-pre-line">{label}</span>
-        <SortGlyph state={direction} />
+        <span
+          className={`shrink-0 text-slate-500 transition-opacity ${
+            sorted ? 'opacity-100' : 'opacity-0 group-hover/head:opacity-100'
+          }`}
+        >
+          <SortGlyph state={direction} />
+        </span>
       </button>
 
       {def.filter && (
@@ -219,6 +233,7 @@ function LeafHead({
           value={filter}
           onChange={next => onFilter(colKey, next)}
           searchOnly={def.searchOnly}
+          reveal
         />
       )}
 
@@ -228,14 +243,15 @@ function LeafHead({
 }
 
 function GroupHead({ block, year, colSpan }: { block: GroupBlock; year: number; colSpan: number }) {
+  const tone = TONE_STYLE[block.tone]
   return (
     <th
       scope="colgroup"
       colSpan={colSpan}
       style={{ top: 0, height: ROW1_H }}
-      className={`sticky z-20 border-b border-r border-white/15 px-1 py-1 text-center align-middle text-[10.5px] font-semibold leading-[1.2] tracking-[0.01em] text-white ${HEAD_TONE[block.tone]}`}
+      className={`sticky z-20 border-b-2 border-r border-slate-200 px-2 text-left align-middle text-[9.5px] font-bold uppercase leading-none tracking-[0.09em] ${tone.band} ${tone.accent}`}
     >
-      <span className="whitespace-pre-line">{blockLabel(block, year)}</span>
+      <span className="block truncate">{blockLabel(block, year)}</span>
     </th>
   )
 }
@@ -244,11 +260,11 @@ function FormulaCell({ col, width }: { col: string; width: number }) {
   const chip = COL_BY_KEY[col]?.formula
   return (
     <td
-      style={{ top: ROW1_H + ROW2_H, height: ROW3_H, width }}
-      className="sticky z-20 border-b border-r border-slate-200 bg-slate-50 px-1 py-[2px] text-center leading-none"
+      style={{ top: HEADER_H, height: ROW3_H, width }}
+      className="sticky z-20 border-b-2 border-b-slate-300 border-r border-slate-200 bg-slate-50 px-1 py-[2px] text-center leading-none"
     >
       {chip && (
-        <span className="inline-block rounded-sm bg-white/85 px-1 py-px font-mono text-[9px] font-medium leading-[1.35] tracking-tight text-slate-600 ring-1 ring-inset ring-slate-200">
+        <span className="inline-block rounded-sm bg-white px-1 py-px font-mono text-[9px] font-medium leading-[1.35] tracking-tight text-slate-500 ring-1 ring-inset ring-slate-200">
           {chip}
         </span>
       )}
@@ -473,6 +489,7 @@ type PaneProps = {
   rows: FixedAsset[]
   density: Density
   loading: boolean
+  showFormulas: boolean
   sort: SortState
   onSort: (key: string) => void
   columnFilters: Record<string, FilterValue>
@@ -499,6 +516,7 @@ function Pane({
   rows,
   density,
   loading,
+  showFormulas,
   sort,
   onSort,
   columnFilters,
@@ -557,7 +575,7 @@ function Pane({
       <LeafHead
         key={block.col}
         colKey={block.col}
-        rowSpan={block.kind === 'span3' ? 3 : 2}
+        rowSpan={2}
         stickyTop={0}
         year={year}
         sort={sort}
@@ -592,7 +610,7 @@ function Pane({
             <th
               scope="col"
               style={{ top: 0, height: ROW1_H }}
-              className="sticky z-20 w-[34px] border-b border-r border-slate-300 bg-[#eef4fa] px-1 text-center align-middle"
+              className="sticky z-20 w-[34px] border-b-2 border-b-slate-300 border-r border-slate-200 bg-slate-50 px-1 text-center align-middle"
             >
               <input
                 type="checkbox"
@@ -613,24 +631,24 @@ function Pane({
             <th
               scope="col"
               style={{ top: ROW1_H, height: ROW2_H }}
-              className="sticky z-20 w-[34px] border-b border-r border-slate-300 bg-[#eef4fa]"
+              className="sticky z-20 w-[34px] border-b-2 border-b-slate-300 border-r border-slate-200 bg-slate-50"
             />
           )}
           {headRow2}
         </tr>
-        <tr>
-          {hasSelect && (
-            <td
-              style={{ top: ROW1_H + ROW2_H, height: ROW3_H }}
-              className="sticky z-20 w-[34px] border-b border-r border-slate-300 bg-[#eef4fa]"
-            />
-          )}
-          {cols
-            .filter(key => !ROW3_SPANNED.includes(key))
-            .map(key => (
+        {showFormulas && (
+          <tr>
+            {hasSelect && (
+              <td
+                style={{ top: HEADER_H, height: ROW3_H }}
+                className="sticky z-20 w-[34px] border-b-2 border-b-slate-300 border-r border-slate-200 bg-slate-50"
+              />
+            )}
+            {cols.map(key => (
               <FormulaCell key={key} col={key} width={widthOfCol(key)} />
             ))}
-        </tr>
+          </tr>
+        )}
       </thead>
 
       <tbody>
@@ -1051,6 +1069,21 @@ export default function AssetList() {
           onReset={() => setPrefs(DEFAULT_PREFS)}
         />
 
+        <button
+          type="button"
+          onClick={() => setPrefs(prev => ({ ...prev, showFormulas: !prev.showFormulas }))}
+          aria-pressed={prefs.showFormulas}
+          title="Tampilkan baris legend rumus (a, b = a ÷ c, g = c − f, …)"
+          className={`inline-flex h-7 items-center gap-1.5 rounded border px-2 text-[10.5px] font-medium transition-colors ${
+            prefs.showFormulas
+              ? 'border-slate-400 bg-slate-100 text-slate-900'
+              : 'border-slate-300 bg-white text-slate-600 hover:bg-slate-50'
+          }`}
+        >
+          <span className="font-mono text-[11px] leading-none">ƒx</span>
+          Formulas
+        </button>
+
         <div className="inline-flex h-7 overflow-hidden rounded border border-slate-300">
           {(['compact', 'comfortable'] as Density[]).map(density => (
             <button
@@ -1168,6 +1201,7 @@ export default function AssetList() {
                 rows={rows}
                 density={prefs.density}
                 loading={isLoading}
+                showFormulas={prefs.showFormulas}
                 sort={sortConfig}
                 onSort={handleSort}
                 columnFilters={columnFilters}
@@ -1197,6 +1231,7 @@ export default function AssetList() {
                   rows={rows}
                   density={prefs.density}
                   loading={isLoading}
+                  showFormulas={prefs.showFormulas}
                   sort={sortConfig}
                   onSort={handleSort}
                   columnFilters={columnFilters}
@@ -1223,7 +1258,7 @@ export default function AssetList() {
         {!isLoading && rows.length === 0 && (
           <div
             className="pointer-events-none absolute inset-x-0 bottom-0 flex items-center justify-center bg-white/90"
-            style={{ top: HEADER_H + 2 }}
+            style={{ top: HEADER_H + (prefs.showFormulas ? ROW3_H : 0) + 2 }}
           >
             <div className="pointer-events-auto px-4 py-10 text-center">
               <p className="text-[13px] font-semibold text-slate-700">Tidak ada aset yang cocok</p>

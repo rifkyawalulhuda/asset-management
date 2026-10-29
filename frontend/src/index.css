@@ -84,7 +84,7 @@ body {
 
 .fx-resizer:hover .fx-resizer-line,
 .fx-resizer:active .fx-resizer-line {
-  background: rgba(255, 255, 255, 0.9);
+  background: #2563eb;
 }
 
 @media (prefers-reduced-motion: reduce) {

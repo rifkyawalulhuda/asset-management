@@ -4,24 +4,63 @@ import type { FilterKind } from './filterUtils'
 
 export type Tone = 'id' | 'gray' | 'green' | 'yellow' | 'orange' | 'blue' | 'purple'
 
-export const HEAD_TONE: Record<Tone, string> = {
-  id: 'bg-[#16354f]',
-  gray: 'bg-slate-700',
-  green: 'bg-[#14532d]',
-  yellow: 'bg-[#713f12]',
-  orange: 'bg-[#7c2d12]',
-  blue: 'bg-[#1e3a8a]',
-  purple: 'bg-[#4c1d95]',
+/**
+ * Soft-tint header palette: the group band carries the colour, leaf cells stay
+ * neutral, and a 2px baseline repeats the segment colour under every column.
+ */
+export const TONE_STYLE: Record<Tone, { band: string; accent: string; leaf: string; dot: string }> = {
+  id: {
+    band: 'bg-sky-100 text-sky-900',
+    accent: 'border-b-sky-600',
+    leaf: 'border-b-sky-300',
+    dot: 'bg-sky-500',
+  },
+  gray: {
+    band: 'bg-slate-100 text-slate-700',
+    accent: 'border-b-slate-400',
+    leaf: 'border-b-slate-300',
+    dot: 'bg-slate-400',
+  },
+  green: {
+    band: 'bg-emerald-100 text-emerald-900',
+    accent: 'border-b-emerald-600',
+    leaf: 'border-b-emerald-300',
+    dot: 'bg-emerald-500',
+  },
+  yellow: {
+    band: 'bg-amber-100 text-amber-900',
+    accent: 'border-b-amber-600',
+    leaf: 'border-b-amber-300',
+    dot: 'bg-amber-500',
+  },
+  orange: {
+    band: 'bg-orange-100 text-orange-900',
+    accent: 'border-b-orange-600',
+    leaf: 'border-b-orange-300',
+    dot: 'bg-orange-500',
+  },
+  blue: {
+    band: 'bg-blue-100 text-blue-900',
+    accent: 'border-b-blue-600',
+    leaf: 'border-b-blue-300',
+    dot: 'bg-blue-500',
+  },
+  purple: {
+    band: 'bg-violet-100 text-violet-900',
+    accent: 'border-b-violet-600',
+    leaf: 'border-b-violet-300',
+    dot: 'bg-violet-500',
+  },
 }
 
 export const CELL_TONE: Record<Tone, string> = {
   id: '',
   gray: '',
-  green: 'bg-green-50',
-  yellow: 'bg-yellow-50',
+  green: 'bg-emerald-50',
+  yellow: 'bg-amber-50',
   orange: 'bg-orange-50',
   blue: 'bg-blue-50',
-  purple: 'bg-purple-50',
+  purple: 'bg-violet-50',
 }
 
 export type ColumnFormat =
@@ -87,19 +126,19 @@ const DEFS: Record<string, Def> = {
   quantity: { label: 'Qty', head: 'Qty', width: 54, tone: 'gray', align: 'center', format: 'int', filter: 'number', group: 'asset' },
   valas: { label: 'Valas', head: 'Valas', width: 56, tone: 'gray', align: 'center', format: 'text', filter: 'text', group: 'asset' },
 
-  purchase_price: { label: 'Purchase Price', head: 'Purchase Price\n(a)', width: 124, tone: 'green', align: 'right', format: 'money', filter: 'number', group: 'cost', formula: 'a' },
-  monthly_depreciation: { label: 'Monthly Depreciation', head: 'Monthly\nDepreciation\n(b=a÷c)', width: 124, tone: 'green', align: 'right', format: 'money', filter: 'number', group: 'cost', formula: 'b = a ÷ c' },
+  purchase_price: { label: 'Purchase Price', head: 'Purchase Price', width: 124, tone: 'green', align: 'right', format: 'money', filter: 'number', group: 'cost', formula: 'a' },
+  monthly_depreciation: { label: 'Monthly Depreciation', head: 'Monthly\nDepreciation', width: 124, tone: 'green', align: 'right', format: 'money', filter: 'number', group: 'cost', formula: 'b = a ÷ c' },
 
-  depreciation_period_total: { label: 'Period Total (c)', head: 'Total\n(c)', width: 62, tone: 'yellow', align: 'right', format: 'int', filter: 'number', group: 'period', formula: 'c' },
-  dep_period_acc_prev_year: { label: 'Acc. prev year (d)', head: 'Acc.\n2025\n(d)', width: 62, tone: 'yellow', align: 'right', format: 'int', filter: 'number', group: 'period', formula: 'd' },
-  dep_period_yearly: { label: 'Yearly (e)', head: 'Yearly\n2026\n(e)', width: 70, tone: 'yellow', align: 'right', format: 'int', filter: 'number', group: 'period', formula: 'e' },
-  dep_period_until_year: { label: 'Until year (f)', head: 'Until\n2026\n(f=d+e)', width: 74, tone: 'yellow', align: 'right', format: 'int', filter: 'number', group: 'period', formula: 'f = d + e' },
-  dep_period_remain: { label: 'Remain (g)', head: 'Remain\n>2027\n(g=c-f)', width: 70, tone: 'yellow', align: 'right', format: 'int', filter: 'number', group: 'period', formula: 'g = c − f' },
+  depreciation_period_total: { label: 'Period Total (c)', head: 'Total', width: 62, tone: 'yellow', align: 'right', format: 'int', filter: 'number', group: 'period', formula: 'c' },
+  dep_period_acc_prev_year: { label: 'Acc. prev year (d)', head: 'Acc. 2025', width: 62, tone: 'yellow', align: 'right', format: 'int', filter: 'number', group: 'period', formula: 'd' },
+  dep_period_yearly: { label: 'Yearly (e)', head: 'Yearly\n2026', width: 70, tone: 'yellow', align: 'right', format: 'int', filter: 'number', group: 'period', formula: 'e' },
+  dep_period_until_year: { label: 'Until year (f)', head: 'Until\n2026', width: 74, tone: 'yellow', align: 'right', format: 'int', filter: 'number', group: 'period', formula: 'f = d + e' },
+  dep_period_remain: { label: 'Remain (g)', head: 'Remain\n>2027', width: 70, tone: 'yellow', align: 'right', format: 'int', filter: 'number', group: 'period', formula: 'g = c − f' },
 
-  acc_depreciation_prev: { label: 'Accumulated Depreciation (prior)', head: 'Accumulated\nDepreciation (l)', width: 126, tone: 'orange', align: 'right', format: 'money', filter: 'number', group: 'prior', formula: 'l = h + j' },
-  net_book_value_prev: { label: 'Net Book Value (prior)', head: 'Net Book\nValue (m=a-l)', width: 126, tone: 'orange', align: 'right', format: 'money', filter: 'number', group: 'prior', formula: 'm = a − l' },
+  acc_depreciation_prev: { label: 'Accumulated Depreciation (prior)', head: 'Accumulated\nDepreciation', width: 126, tone: 'orange', align: 'right', format: 'money', filter: 'number', group: 'prior', formula: 'l = h + j' },
+  net_book_value_prev: { label: 'Net Book Value (prior)', head: 'Net Book\nValue', width: 126, tone: 'orange', align: 'right', format: 'money', filter: 'number', group: 'prior', formula: 'm = a − l' },
 
-  dep_expense_current: { label: 'Depreciation Expense Current', head: 'Depreciation\nExpense Current\n31 Dec 2026', width: 126, tone: 'blue', align: 'right', format: 'money', filter: 'number', group: 'current', formula: 'j = Σk' },
+  dep_expense_current: { label: 'Depreciation Expense Current', head: 'Dep. Expense\n31 Dec 2026', width: 126, tone: 'blue', align: 'right', format: 'money', filter: 'number', group: 'current', formula: 'j = Σk' },
   monthly_total: { label: 'Total/Year', head: 'Total/\nYear', width: 116, tone: 'blue', align: 'right', format: 'money', filter: 'number', group: 'current', formula: 'Σk' },
 
   acc_depreciation_curr: { label: 'Accumulated Depreciation', head: 'Accumulated\nDepreciation', width: 126, tone: 'purple', align: 'right', format: 'money', filter: 'number', group: 'closing', formula: 'l' },
@@ -206,11 +245,11 @@ export const GROUP_LABEL: Record<string, string> = {
 }
 
 const YEAR_HEAD: Record<string, (year: number) => string> = {
-  dep_period_acc_prev_year: year => `Acc.\n${year - 1}\n(d)`,
-  dep_period_yearly: year => `Yearly\n${year}\n(e)`,
-  dep_period_until_year: year => `Until\n${year}\n(f=d+e)`,
-  dep_period_remain: year => `Remain\n>${year + 1}\n(g=c-f)`,
-  dep_expense_current: year => `Depreciation\nExpense Current\n31 Dec ${year}`,
+  dep_period_acc_prev_year: year => `Acc. ${year - 1}`,
+  dep_period_yearly: year => `Yearly\n${year}`,
+  dep_period_until_year: year => `Until\n${year}`,
+  dep_period_remain: year => `Remain\n>${year + 1}`,
+  dep_expense_current: year => `Dep. Expense\n31 Dec ${year}`,
 }
 
 export function headText(key: string, year: number): string {

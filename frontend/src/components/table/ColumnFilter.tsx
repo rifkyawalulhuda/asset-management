@@ -15,6 +15,8 @@ type Props = {
   onChange: (next: FilterValue | undefined) => void
   /** When true the search box only narrows the value list (server-side filters). */
   searchOnly?: boolean
+  /** Inactive trigger stays invisible until the header cell is hovered/focused. */
+  reveal?: boolean
 }
 
 function FunnelIcon() {
@@ -46,7 +48,7 @@ function ChequeIcon() {
   )
 }
 
-export default function ColumnFilter({ label, kind, options, value, onChange, searchOnly = false }: Props) {
+export default function ColumnFilter({ label, kind, options, value, onChange, searchOnly = false, reveal = false }: Props) {
   const buttonRef = useRef<HTMLButtonElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
   const [open, setOpen] = useState(false)
@@ -145,11 +147,15 @@ export default function ColumnFilter({ label, kind, options, value, onChange, se
         aria-expanded={open}
         aria-haspopup="dialog"
         title={`Filter ${label}`}
-        className={`absolute right-0 top-0 flex h-[18px] w-[18px] items-center justify-center rounded-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80 ${
+        className={`absolute right-1 top-1/2 z-10 flex h-[17px] w-[17px] -translate-y-1/2 items-center justify-center rounded transition ${
           active
-            ? 'bg-white text-slate-900 shadow-sm'
-            : 'text-white/55 hover:bg-white/20 hover:text-white'
-        }`}
+            ? 'bg-slate-800 text-white shadow-sm'
+            : `text-slate-400 hover:bg-slate-200 hover:text-slate-700 ${
+                reveal
+                  ? 'opacity-0 group-hover/head:opacity-100 group-focus-within/head:opacity-100 focus:opacity-100 focus-visible:opacity-100'
+                  : 'opacity-70'
+              }`
+        } focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400`}
       >
         <FunnelIcon />
       </button>

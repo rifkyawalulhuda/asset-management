@@ -7,6 +7,7 @@ export type GridPrefs = {
   frozen: string[]
   widths: Record<string, number>
   density: Density
+  showFormulas: boolean
 }
 
 export type SavedView = {
@@ -26,6 +27,7 @@ export const DEFAULT_PREFS: GridPrefs = {
   frozen: ['site_location', 'job', 'category', 'fixed_asset_number_ax', 'name'],
   widths: {},
   density: 'compact',
+  showFormulas: false,
 }
 
 const KNOWN = new Set(COL_ORDER)
@@ -54,6 +56,7 @@ function sanitize(input: unknown, fallback: GridPrefs): GridPrefs {
     frozen,
     widths,
     density: raw.density === 'comfortable' ? 'comfortable' : 'compact',
+    showFormulas: raw.showFormulas === true,
   }
 }
 
