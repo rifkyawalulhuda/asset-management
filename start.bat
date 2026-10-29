@@ -64,18 +64,17 @@ if %errorlevel% neq 0 (
     npm install -g serve >nul 2>&1
 )
 
-:: Build frontend jika dist belum ada atau .env berubah
-if not exist "%~dp0frontend\dist\index.html" (
-    echo   Building frontend...
-    cd /d "%~dp0frontend"
-    call npm run build >nul 2>&1
-    if %errorlevel% neq 0 (
-        echo   ERROR: Frontend build gagal.
-        pause
-        exit /b 1
-    )
+:: Build frontend (selalu, agar perubahan .env / kode tidak tertinggal di dist lama)
+echo   Building frontend...
+cd /d "%~dp0frontend"
+call npm run build >nul 2>&1
+if %errorlevel% neq 0 (
+    echo   ERROR: Frontend build gagal.
     cd /d "%~dp0"
+    pause
+    exit /b 1
 )
+cd /d "%~dp0"
 
 start "Asset Frontend" cmd /k "serve -s %~dp0frontend\dist -l 3000"
 echo   OK: Frontend starting...

@@ -1,4 +1,5 @@
 import { useState, useRef } from 'react'
+import api from '../services/api'
 
 export default function ImportExcel() {
   const [file, setFile] = useState<File | null>(null)
@@ -19,20 +20,15 @@ export default function ImportExcel() {
     try {
       const formData = new FormData()
       formData.append('file', file)
-      const res = await fetch('http://localhost:8000/api/import/excel', {
-        method: 'POST',
-        body: formData,
+      const res = await api.post('/import/excel', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
       })
-      if (!res.ok) {
-        const err = await res.json()
-        throw new Error(err.detail || 'Import failed')
-      }
-      const data = await res.json()
+      const data = res.data
       setStatus('success')
       setMessage(`Import berhasil: ${data.message || JSON.stringify(data)}`)
     } catch (err: any) {
       setStatus('error')
-      setMessage(err.message || 'Import failed')
+      setMessage(err.response?.data?.detail || err.message || 'Import failed')
     }
   }
 
