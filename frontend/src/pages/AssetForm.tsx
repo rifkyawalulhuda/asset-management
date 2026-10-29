@@ -1,12 +1,13 @@
 import { useEffect, useMemo } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useForm } from 'react-hook-form'
+import { useForm, Controller } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { fetchAsset, createAsset, updateAsset, fetchAssetMeta } from '../services/assets'
 import { Field, Section } from '../components/asset/formControls'
 import { AREA, FIELD } from '../components/asset/fieldStyles'
 import DepPreview from '../components/asset/DepPreview'
+import Combobox from '../components/asset/Combobox'
 import { calcDepreciation } from '../components/asset/depCalc'
 import {
   EMPTY_FORM,
@@ -48,6 +49,7 @@ export default function AssetForm() {
     handleSubmit,
     reset,
     watch,
+    control,
     formState: { errors, isDirty, isSubmitting },
   } = useForm<AssetFormValues>({
     resolver: zodResolver(assetSchema),
@@ -228,29 +230,49 @@ export default function AssetForm() {
               <Field label="Name" required htmlFor="name" error={errors.name?.message} className="sm:col-span-2">
                 <input id="name" {...register('name')} aria-invalid={Boolean(errors.name)} className={FIELD} />
               </Field>
-              <Field label="Asset group" htmlFor="group_name" hint="Type to filter existing groups">
-                <input id="group_name" list="asset-groups" {...register('group_name')} className={FIELD} />
-                <datalist id="asset-groups">
-                  {groupOptions.map(option => <option key={option} value={option} />)}
-                </datalist>
+              <Field label="Asset group" htmlFor="group_name" hint="Closed list, taken from existing records">
+                <select id="group_name" {...register('group_name')} className={FIELD}>
+                  <option value="">Not set</option>
+                  {groupOptions.map(option => <option key={option} value={option}>{option}</option>)}
+                </select>
               </Field>
               <Field label="Category" htmlFor="category">
-                <input id="category" list="asset-categories" {...register('category')} className={FIELD} />
-                <datalist id="asset-categories">
-                  {categoryOptions.map(option => <option key={option} value={option} />)}
-                </datalist>
+                <select id="category" {...register('category')} className={FIELD}>
+                  <option value="">Not set</option>
+                  {categoryOptions.map(option => <option key={option} value={option}>{option}</option>)}
+                </select>
               </Field>
-              <Field label="Site / location" htmlFor="site_location">
-                <input id="site_location" list="asset-sites" {...register('site_location')} className={FIELD} />
-                <datalist id="asset-sites">
-                  {siteOptions.map(option => <option key={option} value={option} />)}
-                </datalist>
+              <Field label="Site / location" htmlFor="site_location" hint="Pick from the list or type a new one">
+                <Controller
+                  control={control}
+                  name="site_location"
+                  render={({ field }) => (
+                    <Combobox
+                      id="site_location"
+                      value={field.value ?? ''}
+                      onChange={field.onChange}
+                      onBlur={field.onBlur}
+                      options={siteOptions}
+                      placeholder="Select or type a site"
+                    />
+                  )}
+                />
               </Field>
-              <Field label="Job" htmlFor="job">
-                <input id="job" list="asset-jobs" {...register('job')} className={FIELD} />
-                <datalist id="asset-jobs">
-                  {jobOptions.map(option => <option key={option} value={option} />)}
-                </datalist>
+              <Field label="Job" htmlFor="job" hint="Pick from the list or type a new one">
+                <Controller
+                  control={control}
+                  name="job"
+                  render={({ field }) => (
+                    <Combobox
+                      id="job"
+                      value={field.value ?? ''}
+                      onChange={field.onChange}
+                      onBlur={field.onBlur}
+                      options={jobOptions}
+                      placeholder="Select or type a job"
+                    />
+                  )}
+                />
               </Field>
             </Section>
 
