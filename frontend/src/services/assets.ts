@@ -117,10 +117,16 @@ export const fetchForecastMonthly = async (forecast_year: number, site_location?
   return data
 }
 
-export const fetchForecastByGroup = async (forecast_year: number, site_location?: string, include_planned?: boolean) => {
+export const fetchForecastByGroup = async (
+  forecast_year: number,
+  site_location?: string,
+  include_planned?: boolean,
+  group_by?: 'job' | 'group_name' | 'category',
+) => {
   const params: Record<string, unknown> = { forecast_year }
   if (site_location) params.site_location = site_location
   if (include_planned) params.include_planned = true
+  if (group_by) params.group_by = group_by
   const { data } = await api.get('/forecast/by-group', { params })
   return data
 }
@@ -135,7 +141,17 @@ export const fetchForecastByCategory = async (forecast_year: number, site_locati
 
 export const fetchForecastAssets = async (
   forecast_year: number,
-  params?: { site_location?: string; group_name?: string; category?: string; search?: string; page?: number; size?: number; include_planned?: boolean }
+  params?: {
+    site_location?: string
+    job?: string
+    group_name?: string
+    category?: string
+    search?: string
+    page?: number
+    size?: number
+    include_planned?: boolean
+    include_excluded?: boolean
+  }
 ) => {
   const { data } = await api.get('/forecast/assets', { params: { forecast_year, ...params } })
   return data
@@ -186,25 +202,19 @@ export const deletePlannedAsset = async (id: number): Promise<void> => {
 }
 
 // Forecast Excel Export
-export const downloadForecastExcel = async (forecast_year: number, site_location?: string): Promise<void> => {
-  const params: Record<string, string> = { forecast_year: String(forecast_year) }
-  if (site_location) params.site_location = site_location
+//
+// A plain anchor click is used instead of fetching a blob: the request then
+// keeps the user-gesture context (Chrome blocks async "downloads"), the server
+// filename from Content-Disposition is preserved, and nothing is buffered in
+// memory.
+export const downloadForecastExcel = (forecast_year: number, site_location?: string): void => {
+  const params = new URLSearchParams({ forecast_year: String(forecast_year) })
+  if (site_location) params.set('site_location', site_location)
 
-  const response = await api.get('/export/forecast-excel', {
-    params,
-    responseType: 'blob',
-  })
-
-  const siteLabel = site_location || 'All'
-  const today = new Date().toISOString().slice(0, 10).replace(/-/g, '')
-  const filename = `forecast_${forecast_year}_${siteLabel}_${today}.xlsx`
-
-  const url = window.URL.createObjectURL(new Blob([response.data]))
   const link = document.createElement('a')
-  link.href = url
-  link.setAttribute('download', filename)
+  link.href = `${api.defaults.baseURL}/export/forecast-excel?${params.toString()}`
+  link.rel = 'noopener'
   document.body.appendChild(link)
   link.click()
   link.remove()
-  window.URL.revokeObjectURL(url)
 }

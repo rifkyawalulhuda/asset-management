@@ -13,6 +13,23 @@ router = APIRouter(prefix="/forecast", tags=["forecast"])
 
 MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
 
+# Assets in these groups never depreciate, so a missing period is expected
+# rather than a data-entry problem.
+NON_DEPRECIABLE_GROUPS = {"land", "construction in process"}
+NON_DEPRECIABLE_AX_PREFIXES = ("LAD", "CIP")
+
+
+def is_non_depreciable(asset: FixedAsset) -> bool:
+    """Land and construction-in-process never depreciate.
+
+    Their group is sometimes empty, so the AX prefix (LAD…, CIP…) is the
+    reliable signal.
+    """
+    if (asset.group_name or "").strip().lower() in NON_DEPRECIABLE_GROUPS:
+        return True
+    ax = (asset.fixed_asset_number_ax or "").strip().upper()
+    return ax.startswith(NON_DEPRECIABLE_AX_PREFIXES)
+
 
 def calc_asset_forecast(asset: FixedAsset, forecast_year: int) -> Optional[Dict]:
     """Calculate forecasted depreciation for a single existing asset."""
@@ -203,6 +220,9 @@ def forecast_totals(
     total_yearly_dep = 0.0
     total_acc_dep = 0.0
     total_nbv = 0.0
+    excluded_assets = 0
+    excluded_missing_data = 0
+    excluded_non_depreciable = 0
 
     for asset in assets:
         fc = calc_asset_forecast(asset, forecast_year)
@@ -211,6 +231,12 @@ def forecast_totals(
             total_yearly_dep += fc["dep_expense_current"]
             total_acc_dep += fc["acc_depreciation_curr"]
             total_nbv += fc["nbv_curr"]
+        else:
+            excluded_assets += 1
+            if is_non_depreciable(asset):
+                excluded_non_depreciable += 1
+            else:
+                excluded_missing_data += 1
 
     # Planned assets contribution
     planned_purchase = 0.0
@@ -233,6 +259,10 @@ def forecast_totals(
     return {
         "forecast_year": forecast_year,
         "total_assets": total_assets,
+        "excluded_assets": excluded_assets,
+        "excluded_missing_data": excluded_missing_data,
+        "excluded_non_depreciable": excluded_non_depreciable,
+        "forecasted_assets": total_assets - excluded_assets,
         "total_purchase_price": total_purchase,
         "total_yearly_depreciation": total_yearly_dep,
         "total_acc_depreciation": total_acc_dep,
@@ -297,9 +327,10 @@ def forecast_by_group(
     forecast_year: int = Query(2027, ge=2026),
     site_location: Optional[str] = None,
     include_planned: bool = False,
+    group_by: str = Query("group_name", pattern="^(job|group_name|category)$"),
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
-    """Returns yearly depreciation subtotals per group_name for the forecasted year."""
+    """Yearly depreciation subtotals per dimension (job, group_name or category)."""
     assets = get_assets(db, site_location)
 
     result: Dict[str, Dict] = {}
@@ -307,11 +338,13 @@ def forecast_by_group(
         fc = calc_asset_forecast(asset, forecast_year)
         if not fc:
             continue
-        key = fc["group_name"] or "Unknown"
+        key = get_group_key(fc, group_by)
         if key not in result:
             result[key] = {"yearly_depreciation": 0.0, "purchase_price": 0.0,
                            "acc_depreciation": 0.0, "net_book_value": 0.0, "count": 0,
-                           "planned_yearly": 0.0, "planned_count": 0}
+                           "planned_yearly": 0.0, "planned_count": 0,
+                           "planned_purchase_price": 0.0, "planned_acc_depreciation": 0.0,
+                           "planned_net_book_value": 0.0}
         result[key]["yearly_depreciation"] += fc["dep_expense_current"]
         result[key]["purchase_price"] += fc["purchase_price"]
         result[key]["acc_depreciation"] += fc["acc_depreciation_curr"]
@@ -324,13 +357,16 @@ def forecast_by_group(
             fc = calc_planned_forecast(asset, forecast_year)
             if not fc:
                 continue
-            key = fc["group_name"] or "Unknown"
+            key = get_group_key(fc, group_by)
             if key not in result:
                 result[key] = {"yearly_depreciation": 0.0, "purchase_price": 0.0,
                                "acc_depreciation": 0.0, "net_book_value": 0.0, "count": 0,
                                "planned_yearly": 0.0, "planned_count": 0}
             result[key]["planned_yearly"] += fc["dep_expense_current"]
             result[key]["planned_count"] += 1
+            result[key]["planned_purchase_price"] += fc["purchase_price"]
+            result[key]["planned_acc_depreciation"] += fc["acc_depreciation_curr"]
+            result[key]["planned_net_book_value"] += fc["nbv_curr"]
 
     return result
 
@@ -354,7 +390,9 @@ def forecast_by_category(
         if key not in result:
             result[key] = {"yearly_depreciation": 0.0, "purchase_price": 0.0,
                            "acc_depreciation": 0.0, "net_book_value": 0.0, "count": 0,
-                           "planned_yearly": 0.0, "planned_count": 0}
+                           "planned_yearly": 0.0, "planned_count": 0,
+                           "planned_purchase_price": 0.0, "planned_acc_depreciation": 0.0,
+                           "planned_net_book_value": 0.0}
         result[key]["yearly_depreciation"] += fc["dep_expense_current"]
         result[key]["purchase_price"] += fc["purchase_price"]
         result[key]["acc_depreciation"] += fc["acc_depreciation_curr"]
@@ -374,18 +412,62 @@ def forecast_by_category(
                                "planned_yearly": 0.0, "planned_count": 0}
             result[key]["planned_yearly"] += fc["dep_expense_current"]
             result[key]["planned_count"] += 1
+            result[key]["planned_purchase_price"] += fc["purchase_price"]
+            result[key]["planned_acc_depreciation"] += fc["acc_depreciation_curr"]
+            result[key]["planned_net_book_value"] += fc["nbv_curr"]
 
     return dict(sorted(result.items(), key=lambda x: x[1]["yearly_depreciation"], reverse=True))
+
+
+def _excluded_row(asset: FixedAsset) -> Dict[str, Any]:
+    """Row for an asset that cannot be forecast (missing price or period).
+
+    It is returned only when `include_excluded=true`, so it can be surfaced in
+    the asset grid instead of silently disappearing from the report.
+    """
+    return {
+        "id": asset.id,
+        "fixed_asset_number_ax": asset.fixed_asset_number_ax,
+        "asset_no": asset.asset_no,
+        "name": asset.name,
+        "group_name": asset.group_name,
+        "category": asset.category,
+        "site_location": asset.site_location,
+        "job": asset.job,
+        "purchase_price": float(asset.purchase_price) if asset.purchase_price else 0.0,
+        "purchase_date": str(asset.purchase_date) if asset.purchase_date else None,
+        "depreciation_period_total": int(asset.depreciation_period_total) if asset.depreciation_period_total else 0,
+        "monthly_depreciation": 0.0,
+        "dep_period_remain": 0,
+        "dep_expense_current": 0.0,
+        "nbv_curr": 0.0,
+        "total_year": 0.0,
+        "months": {month: 0.0 for month in MONTHS},
+        "is_planned": False,
+        "excluded": True,
+        "excluded_reason": (
+            "non_depreciable" if is_non_depreciable(asset) else "missing_data"
+        ),
+    }
+
+
+def _matches_filter(value: Optional[str], target: str) -> bool:
+    """Match a dimension value; the UI's 'UNKNOWN' bucket means a null value."""
+    if target.upper() == "UNKNOWN":
+        return not value
+    return value == target
 
 
 @router.get("/assets")
 def forecast_assets(
     forecast_year: int = Query(2027, ge=2026),
     site_location: Optional[str] = None,
+    job: Optional[str] = None,
     group_name: Optional[str] = None,
     category: Optional[str] = None,
     search: Optional[str] = None,
     include_planned: bool = False,
+    include_excluded: bool = False,
     page: int = Query(1, ge=1),
     size: int = Query(100, ge=1, le=350),
     db: Session = Depends(get_db),
@@ -394,10 +476,13 @@ def forecast_assets(
     assets = get_assets(db, site_location)
 
     rows = []
+    excluded_rows = []
     for asset in assets:
-        if group_name and asset.group_name != group_name:
+        if job and not _matches_filter(asset.job, job):
             continue
-        if category and asset.category != category:
+        if group_name and not _matches_filter(asset.group_name, group_name):
+            continue
+        if category and not _matches_filter(asset.category, category):
             continue
         if search:
             s = search.lower()
@@ -406,13 +491,20 @@ def forecast_assets(
         fc = calc_asset_forecast(asset, forecast_year)
         if fc:
             rows.append(fc)
+        elif include_excluded:
+            excluded_rows.append(_excluded_row(asset))
+
+    # Surfacing missing-data assets first makes the toggle immediately useful.
+    rows = excluded_rows + rows
 
     if include_planned:
         planned = get_planned_assets(db, forecast_year, site_location)
         for asset in planned:
-            if group_name and asset.group_name != group_name:
+            if job and not _matches_filter(asset.job, job):
                 continue
-            if category and asset.category != category:
+            if group_name and not _matches_filter(asset.group_name, group_name):
+                continue
+            if category and not _matches_filter(asset.category, category):
                 continue
             if search:
                 s = search.lower()
