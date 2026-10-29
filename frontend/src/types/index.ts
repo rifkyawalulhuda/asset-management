@@ -57,6 +57,8 @@ export interface FixedAssetListResponse {
   size: number
 }
 
+export type AcquisitionType = 'Acquisition' | 'Disposal' | 'Transfer' | 'Adjustment'
+
 export interface AcquisitionDisposal {
   id: number
   asset_id: number | null

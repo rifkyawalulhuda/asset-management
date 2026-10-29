@@ -58,6 +58,76 @@ def to_date(value) -> Optional[date]:
     return None
 
 
+def _chunks(items: list, size: int = 1000):
+    """Yield lists of at most `size` items (keeps SQL IN() clauses small)."""
+    for start in range(0, len(items), size):
+        yield items[start:start + size]
+
+
+APPROVAL_TYPES = ("Acquisition", "Disposal", "Transfer", "Adjustment")
+
+APPROVAL_TYPE_ALIASES = {
+    "acquisition": "Acquisition",
+    "acquisitions": "Acquisition",
+    "disposal": "Disposal",
+    "disposals": "Disposal",
+    "transfer": "Transfer",
+    "transfers": "Transfer",
+    # Withdrawals are economically disposals: the asset leaves the register.
+    "withdrawal": "Disposal",
+    "withdrawals": "Disposal",
+    "adjustment": "Adjustment",
+    "adjustments": "Adjustment",
+}
+
+APPLICATION_TYPE_MARKERS = (
+    ("FA-PURC", "Acquisition"),
+    ("FA-DISP", "Disposal"),
+    ("FA-TRF", "Transfer"),
+)
+
+EMPTY_CELL_VALUES = {"", "-", "#N/A", "N/A", "NONE"}
+
+
+def clean_cell(value) -> Optional[str]:
+    """to_str() that also drops spreadsheet error markers and placeholder dashes."""
+    text = to_str(value)
+    if text is None:
+        return None
+    return None if text.upper() in EMPTY_CELL_VALUES else text
+
+
+def normalize_approval_type(status, application) -> str:
+    """Map a raw status (or the application number prefix) to one of APPROVAL_TYPES.
+
+    'List Approval' sheets leave the status column empty for transfers, so the
+    application number ("004/ASC/FA-Trf/I/2025") is the second source of truth.
+    """
+    alias = APPROVAL_TYPE_ALIASES.get((status or "").strip().lower())
+    if alias:
+        return alias
+    app = (application or "").upper()
+    for marker, kind in APPLICATION_TYPE_MARKERS:
+        if marker in app:
+            return kind
+    return "Adjustment"
+
+
+def approval_key(year_ref, fixed_asset_no, asset_name, bookslip_no, application, status) -> tuple:
+    """Identity of a movement row: one asset within one approval batch.
+
+    The sheet's bookslip number is the batch; transfers have no bookslip, so the
+    application number is used instead. Rows without an AX number fall back to
+    the asset name so distinct unnamed-but-different assets never collide.
+    """
+    return (
+        year_ref,
+        fixed_asset_no or asset_name,
+        bookslip_no or application,
+        status,
+    )
+
+
 def to_str(value) -> Optional[str]:
     if value is None:
         return None
@@ -308,7 +378,7 @@ def import_fa_sheet(ws, year_ref: int, db: Session) -> int:
         col_map['nbv_prev'] = remain_col + 2
         col_map['dep_expense'] = remain_col + 3
 
-    count = 0
+    parsed: dict[str, tuple[dict, list]] = {}
 
     for row in ws.iter_rows(min_row=data_start_row, values_only=True):
         # Row must start with a numeric No.
@@ -389,142 +459,232 @@ def import_fa_sheet(ws, year_ref: int, db: Session) -> int:
             year_ref=year_ref,
         )
 
-        # Upsert by fixed_asset_number_ax + year_ref (ax_no already validated, never None)
-        existing = db.query(FixedAsset).filter(
-            FixedAsset.fixed_asset_number_ax == ax_no,
-            FixedAsset.year_ref == year_ref,
-        ).first()
+        months = []
+        for month, ci in monthly_cols.items():
+            if ci < len(row):
+                months.append((month, to_decimal(row[ci]) or Decimal("0")))
 
-        if existing:
-            for k, v in data.items():
+        # Same AX twice in one file: the last occurrence wins (never insert twice).
+        parsed[ax_no] = (data, months)
+
+    if not parsed:
+        return 0
+
+    # ---- Phase 2: load every existing asset in a handful of queries --------
+    existing_by_ax: dict[str, FixedAsset] = {}
+    for chunk in _chunks(list(parsed.keys()), 1000):
+        rows_found = db.query(FixedAsset).filter(
+            FixedAsset.year_ref == year_ref,
+            FixedAsset.fixed_asset_number_ax.in_(chunk),
+        )
+        for asset in rows_found:
+            existing_by_ax[asset.fixed_asset_number_ax] = asset
+
+    # ---- Phase 3: upsert assets (single flush for the new ones) ------------
+    touched: list[FixedAsset] = []
+    created: list[FixedAsset] = []
+
+    for ax_no, (data, _) in parsed.items():
+        asset = existing_by_ax.get(ax_no)
+        if asset is not None:
+            for key, value in data.items():
                 # Preserve existing category if new file has no Category column
-                if k == 'category' and not has_category and existing.category:
+                if key == 'category' and not has_category and asset.category:
                     continue
-                setattr(existing, k, v)
-            asset = existing
+                setattr(asset, key, value)
         else:
             asset = FixedAsset(**data)
             db.add(asset)
+            created.append(asset)
+            existing_by_ax[ax_no] = asset
+        touched.append(asset)
 
-        db.flush()
+    if created:
+        db.flush()  # assigns every primary key in one round-trip
 
-        # Monthly depreciation rows
+    # ---- Phase 4: replace monthly rows in bulk -----------------------------
+    for chunk in _chunks([asset.id for asset in touched], 1000):
         db.query(DepreciationMonthly).filter(
-            DepreciationMonthly.asset_id == asset.id,
+            DepreciationMonthly.asset_id.in_(chunk),
             DepreciationMonthly.year == year_ref,
-        ).delete()
+        ).delete(synchronize_session=False)
 
-        for month, ci in monthly_cols.items():
-            if ci < len(row):
-                amount = to_decimal(row[ci]) or Decimal("0")
-                db.add(DepreciationMonthly(
-                    asset_id=asset.id,
-                    year=year_ref,
-                    month=month,
-                    amount=amount,
-                ))
+    monthly_rows = [
+        DepreciationMonthly(
+            asset_id=existing_by_ax[ax_no].id,
+            year=year_ref,
+            month=month,
+            amount=amount,
+        )
+        for ax_no, (_, months) in parsed.items()
+        for month, amount in months
+    ]
+    if monthly_rows:
+        db.bulk_save_objects(monthly_rows)
 
-        count += 1
-
-    return count
+    return len(parsed)
 
 
 def import_approval_sheet(ws, year_ref: int, db: Session) -> int:
-    """Import acquisition/disposal records from 'List Approval' sheet.
+    """Import acquisition/disposal/transfer rows from a 'List Approval' sheet.
 
-    Actual column layout (0-indexed) — confirmed from Fixed Asset_202606_1.xlsx:
+    Column layout (0-indexed), identical in the 2025 and 2026 sheets:
       0:  No.
       1:  Site
       2:  Job
       3:  Fixed Asset Number AX
       4:  Asset No. (internal, e.g. CLC-A-002)
-      5:  Application No (e.g. 001/ASC/FA-Disp/I/2025)
+      5:  Application No (e.g. 001/CLC/FA-Disp/III/2026)
       6:  (empty / sub-number)
       7:  (empty / sub-number)
-      8:  Remark / Date (secondary date — used as transaction_date if col9 absent)
-      9:  Purchase / Disposed Date (primary date)
+      8:  Remark date (2025 only — fallback for the transaction date)
+      9:  Purchase / Disposed Date (primary)
       10: Bookslip No.
       11: Name of Fixed Asset
       12: Purchase / Disposal Price
-      13: Status — Acquisition column (value: 'Acquisition' or None)
-      14: Status — Disposals column (value: 'Disposal'/'Disposals' or None)
+      13: Status — Acquisition column
+      14: Status — Disposals column
       15: Vendor / Customer
-    """
-    count = 0
 
-    # Find header row — look for 'site' and 'job' keywords
+    Only sheets named 'List Approval *' must be passed here. The 'Disposal 20xx'
+    sheet has a completely different layout (cost / acc. depreciation / NBV /
+    proceeds) and parsing it with these indices is what used to fill the table
+    with garbage rows.
+    """
     data_start = 7  # safe default
     for r in range(1, 15):
         row = list(ws.iter_rows(min_row=r, max_row=r, values_only=True))[0]
         texts = [str(v).strip().lower() for v in row if v]
-        if 'site' in texts and 'job' in texts:
-            data_start = r + 2  # skip header row + one blank row
+        if "site" in texts and "job" in texts:
+            data_start = r + 2  # skip the two header rows
             break
 
+    # ---- Phase 1: parse rows (no DB round-trips) ---------------------------
+    parsed: list[dict] = []
     for row in ws.iter_rows(min_row=data_start, values_only=True):
-        # Skip rows with no data
         if not row or len(row) < 4:
             continue
-        # Row must have a non-empty site or job to be a valid data row
-        site = to_str(row[1]) if len(row) > 1 else None
-        job = to_str(row[2]) if len(row) > 2 else None
+
+        def cell(index: int):
+            return row[index] if len(row) > index else None
+
+        site = clean_cell(cell(1))
+        job = clean_cell(cell(2))
         if not site and not job:
             continue
 
-        fixed_asset_no_ax = to_str(row[3]) if len(row) > 3 else None
-        application = to_str(row[5]) if len(row) > 5 else None
+        fixed_asset_no = clean_cell(cell(3))
+        asset_no = clean_cell(cell(4))
+        application = clean_cell(cell(5))
+        transaction_date = to_date(cell(9)) or to_date(cell(8))
+        bookslip_no = clean_cell(cell(10))
+        asset_name = clean_cell(cell(11))
+        price = to_decimal(cell(12))
+        vendor_customer = clean_cell(cell(15))
 
-        # col 9 = Purchase/Disposed Date (primary), col 8 = Remark date (fallback)
-        transaction_date = to_date(row[9]) if len(row) > 9 else None
-        if transaction_date is None:
-            transaction_date = to_date(row[8]) if len(row) > 8 else None
-
-        bookslip_no = to_str(row[10]) if len(row) > 10 else None
-        asset_name = to_str(row[11]) if len(row) > 11 else None
-        price = to_decimal(row[12]) if len(row) > 12 else None
-
-        # Status: col 13 = 'Acquisition', col 14 = 'Disposal'/'Disposals'
-        status_acq = to_str(row[13]) if len(row) > 13 else None
-        status_dis = to_str(row[14]) if len(row) > 14 else None
-        status = status_acq or status_dis
-
-        # col 15 = Vendor/Customer
-        vendor_customer = to_str(row[15]) if len(row) > 15 else None
-
-        if not asset_name and not fixed_asset_no_ax:
+        # Sheets carry approval rows that were never filled in (#N/A name and
+        # no AX number). They are placeholders, not movements.
+        if not asset_name and not fixed_asset_no:
             continue
 
-        # Try to find linked asset by AX number first, then asset_no
-        asset_id = None
-        if fixed_asset_no_ax:
-            asset = db.query(FixedAsset).filter(
-                FixedAsset.fixed_asset_number_ax == fixed_asset_no_ax
-            ).first()
-            if not asset:
-                asset = db.query(FixedAsset).filter(
-                    FixedAsset.asset_no == fixed_asset_no_ax
-                ).first()
-            if asset:
-                asset_id = asset.id
-
-        record = AcquisitionDisposal(
-            asset_id=asset_id,
-            site=site,
-            job=job,
-            fixed_asset_no=fixed_asset_no_ax,
-            application=application,
-            transaction_date=transaction_date,
-            bookslip_no=bookslip_no,
-            asset_name=asset_name,
-            price=price,
-            status=status,
-            vendor_customer=vendor_customer,
-            year_ref=year_ref,
+        status = normalize_approval_type(
+            clean_cell(cell(13)) or clean_cell(cell(14)),
+            application,
         )
-        db.add(record)
-        count += 1
 
-    return count
+        parsed.append({
+            "site": site,
+            "job": job,
+            "fixed_asset_no": fixed_asset_no,
+            "asset_no": asset_no,
+            "application": application,
+            "transaction_date": transaction_date,
+            "bookslip_no": bookslip_no,
+            "asset_name": asset_name,
+            "price": price,
+            "status": status,
+            "vendor_customer": vendor_customer,
+            "year_ref": year_ref,
+        })
+
+    if not parsed:
+        return 0
+
+    # ---- Phase 2: resolve asset links in bulk ------------------------------
+    ax_values = sorted({
+        value
+        for item in parsed
+        for value in (item["fixed_asset_no"], item["asset_no"])
+        if value
+    })
+    asset_by_no: dict[str, int] = {}
+    for chunk in _chunks(ax_values, 1000):
+        for asset_id, ax_no in db.query(FixedAsset.id, FixedAsset.fixed_asset_number_ax).filter(
+            FixedAsset.fixed_asset_number_ax.in_(chunk)
+        ):
+            asset_by_no[ax_no] = asset_id
+        for asset_id, asset_no in db.query(FixedAsset.id, FixedAsset.asset_no).filter(
+            FixedAsset.asset_no.in_(chunk)
+        ):
+            asset_by_no.setdefault(asset_no, asset_id)
+
+    # ---- Phase 3: upsert by (year, asset, batch, type) ---------------------
+    existing: dict[tuple, AcquisitionDisposal] = {}
+    for record in db.query(AcquisitionDisposal).filter(
+        AcquisitionDisposal.year_ref == year_ref
+    ):
+        existing[
+            approval_key(
+                record.year_ref,
+                record.fixed_asset_no,
+                record.asset_name,
+                record.bookslip_no,
+                record.application,
+                # Normalise on the way in too, so a legacy row whose status is
+                # still "Disposals" is updated instead of duplicated.
+                normalize_approval_type(record.status, record.application),
+            )
+        ] = record
+
+    written = 0
+    for item in parsed:
+        key = approval_key(
+            item["year_ref"],
+            item["fixed_asset_no"],
+            item["asset_name"],
+            item["bookslip_no"],
+            item["application"],
+            item["status"],
+        )
+        asset_id = (
+            asset_by_no.get(item["fixed_asset_no"] or "")
+            or asset_by_no.get(item["asset_no"] or "")
+        )
+
+        record = existing.get(key)
+        if record is None:
+            record = AcquisitionDisposal(asset_id=asset_id, **{
+                k: v for k, v in item.items() if k != "asset_no"
+            })
+            db.add(record)
+            existing[key] = record
+            written += 1
+            continue
+
+        changed = False
+        for field, value in item.items():
+            if field in ("asset_no", "year_ref"):
+                continue
+            if getattr(record, field) != value:
+                setattr(record, field, value)
+                changed = True
+        if asset_id is not None and record.asset_id != asset_id:
+            record.asset_id = asset_id
+            changed = True
+        if changed:
+            written += 1
+
+    return written
 
 
 def run_import(xlsx_path: str, wb=None):
@@ -559,10 +719,12 @@ def run_import(xlsx_path: str, wb=None):
                 print(f"  {sheet_name}: {n} assets imported (year_ref={yr})")
                 db.commit()
 
-        # Import List Approval / Disposal sheets
+        # Import List Approval sheets only. The "Disposal 20xx" sheet is a
+        # different report (cost / acc. depreciation / NBV / proceeds) and must
+        # never be parsed with the List Approval column layout.
         for sheet_name in wb.sheetnames:
             sn_lower = sheet_name.lower()
-            if 'list approval' in sn_lower or 'disposal' in sn_lower:
+            if 'list approval' in sn_lower:
                 # Extract year from sheet name
                 import re
                 years_found = re.findall(r'20\d{2}', sheet_name)
