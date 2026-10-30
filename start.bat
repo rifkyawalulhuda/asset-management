@@ -46,13 +46,21 @@ echo   OK: PostgreSQL ready on port 5436.
 echo.
 
 :: ── Step 2: Start Backend ─────────────────────────────────────────────────────
+:: venv/ dan .env tidak ikut ter-deploy (masuk .gitignore); pastikan dulu
+:: venv + dependencies ada, dan panggil python venv secara langsung.
 echo [2/3] Starting Backend (FastAPI port 8000)...
-start "Asset Backend" cmd /k "cd /d %~dp0backend && call venv\Scripts\activate && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+call "%~dp0setup-backend.bat" --quiet
+if %errorlevel% neq 0 (
+    echo   ERROR: Environment backend belum siap - lihat pesan di atas.
+    pause
+    exit /b 1
+)
+start "Asset Backend" /D "%~dp0backend" cmd /k "venv\Scripts\python.exe -m uvicorn app.main:app --host 0.0.0.0 --port 8000"
 echo   OK: Backend starting...
 echo.
 
 :: Wait a moment for backend to boot
-timeout /t 3 /nobreak >nul
+timeout /t 5 /nobreak >nul
 
 :: ── Step 3: Build & Serve Frontend ───────────────────────────────────────────
 echo [3/3] Starting Frontend (port 3100)...
