@@ -17,6 +17,12 @@ def _resolve_pg_driver(url: str) -> str:
     URL bisa ditulis sebagai postgresql://, postgresql+psycopg://, atau
     postgresql+psycopg2://. Bila driver yang diminta tidak ada, pakai driver
     lain yang tersedia supaya backend tidak gagal saat import.
+
+    Catatan penting: SQLAlchemy 2.x memetakan URL tanpa driver
+    (postgresql://...) ke psycopg (v3), BUKAN psycopg2. Karena proyek ini
+    memakai psycopg2-binary, URL tanpa driver harus ditulis eksplisit menjadi
+    postgresql+psycopg2:// agar tidak gagal dengan
+    "ModuleNotFoundError: No module named 'psycopg'".
     """
     if not url.startswith("postgresql"):
         return url
@@ -27,10 +33,19 @@ def _resolve_pg_driver(url: str) -> str:
 
     driver = scheme.split("+", 1)[1] if "+" in scheme else ""
 
+    if driver == "":
+        # Tanpa driver eksplisit: pilih yang benar-benar terpasang, dengan
+        # prioritas psycopg2 (paket yang ada di requirements.txt).
+        if _has_module("psycopg2"):
+            return f"postgresql+psycopg2://{rest}"
+        if _has_module("psycopg"):
+            return f"postgresql+psycopg://{rest}"
+        return url
+
     if driver == "psycopg" and not _has_module("psycopg"):
         if _has_module("psycopg2"):
             return f"postgresql+psycopg2://{rest}"
-    elif driver in ("", "psycopg2") and not _has_module("psycopg2"):
+    elif driver == "psycopg2" and not _has_module("psycopg2"):
         if _has_module("psycopg"):
             return f"postgresql+psycopg://{rest}"
 

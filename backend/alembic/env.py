@@ -7,11 +7,16 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from app.database import Base
+from app.config import settings
 from app.models import FixedAsset, DepreciationMonthly, AcquisitionDisposal  # noqa: F401
 
 config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
+
+# Pakai URL yang sudah dinormalisasi oleh app.config (driver psycopg2/psycopg
+# dipilih sesuai paket terpasang). Ini juga membuat .env dihormati oleh Alembic.
+config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
 
 target_metadata = Base.metadata
 

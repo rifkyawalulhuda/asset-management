@@ -97,6 +97,34 @@ if errorlevel 1 (
 )
 echo   [OK] Dependencies siap ^(uvicorn terpasang di venv^).
 
+:: ── .env ada? (juga tidak ter-deploy karena masuk .gitignore) ────────────────
+:: Dicek SEBELUM smoke test supaya masalah .env tidak tertutup error import.
+if exist "%BACKEND%\.env" (
+    echo   [OK] Ditemukan %BACKEND%\.env
+) else (
+    echo.
+    echo   [!] PERHATIAN: %BACKEND%\.env TIDAK ditemukan.
+    if exist "%BACKEND%\.env.txt" (
+        echo       Ada file ".env.txt" - Windows mungkin menyembunyikan ekstensi.
+        echo       Rename menjadi ".env" ^(tanpa .txt^).
+    )
+    echo       Backend akan memakai default localhost:5432, sedangkan
+    echo       PostgreSQL proyek ini berjalan di port 5436.
+    echo       Buat file tersebut berisi baris:
+    echo         DATABASE_URL=postgresql://sankyu:sankyu123@localhost:5436/sankyu_assets
+    echo       ^(postgresql+psycopg:// juga diterima^)
+)
+
+:: ── Diagnosa konfigurasi database ───────────────────────────────────────────
+:: pydantic-settings memberi prioritas lebih tinggi ke environment variable OS
+:: daripada isi backend\.env. Jadi DATABASE_URL yang di-set lewat "set"/"setx"
+:: akan MENIMPA .env tanpa terlihat - sumber kebingungan saat troubleshooting.
+pushd "%BACKEND%"
+echo   [i] Konfigurasi database yang terbaca:
+"%VPY%" -c "import os,sys;sys.path.insert(0,'.');from app.config import settings;env=os.environ.get('DATABASE_URL');print('      env var OS :', env if env else '(tidak di-set)');print('      dipakai    :', settings.DATABASE_URL)"
+if defined DATABASE_URL echo   [!] Env var DATABASE_URL terdeteksi - nilainya MENIMPA isi backend\.env
+popd
+
 :: ── Smoke test: pastikan aplikasi bisa di-import ────────────────────────────
 :: Menangkap lebih awal error seperti driver database tidak terpasang
 :: (ModuleNotFoundError: No module named 'psycopg') sebelum backend dijalankan.
@@ -114,16 +142,7 @@ if not "%IMPORTRC%"=="0" (
 popd
 echo   [OK] app.main berhasil di-import.
 
-:: ── .env ada? (juga tidak ter-deploy karena masuk .gitignore) ────────────────
-if not exist "%BACKEND%\.env" (
-    echo.
-    echo   [!] PERHATIAN: %BACKEND%\.env tidak ditemukan.
-    echo       Backend akan memakai default localhost:5432, sedangkan
-    echo       PostgreSQL proyek ini berjalan di port 5436.
-    echo       Buat file tersebut berisi baris:
-    echo         DATABASE_URL=postgresql://sankyu:sankyu123@localhost:5436/sankyu_assets
-    echo       ^(postgresql+psycopg:// juga diterima^)
-)
+:: ── Done — .env sudah di-check di atas sebelum smoke test ─────────────────────
 
 echo.
 echo   Backend siap.
