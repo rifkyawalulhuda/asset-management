@@ -76,7 +76,7 @@ if not exist "%VPY%" (
 "%VPY%" -c "import uvicorn, psycopg2, fastapi" >nul 2>&1
 if errorlevel 1 (
     echo   [..] Dependencies belum lengkap, menjalankan pip install...
-    echo        (proses ini bisa beberapa menit pada instalasi pertama)
+    echo        ^(proses ini bisa beberapa menit pada instalasi pertama^)
     "%VPY%" -m pip install --disable-pip-version-check --upgrade pip
     "%VPY%" -m pip install --disable-pip-version-check -r "%BACKEND%\requirements.txt"
     if errorlevel 1 (
@@ -108,10 +108,10 @@ if exist "%BACKEND%\.env" (
         echo       Ada file ".env.txt" - Windows mungkin menyembunyikan ekstensi.
         echo       Rename menjadi ".env" ^(tanpa .txt^).
     )
-    echo       Backend akan memakai default localhost:5432, sedangkan
-    echo       PostgreSQL proyek ini berjalan di port 5436.
+    echo       Backend akan memakai default localhost:5432, yang cocok untuk
+    echo       PostgreSQL native. ^(Mode Docker memakai port 5436.^)
     echo       Buat file tersebut berisi baris:
-    echo         DATABASE_URL=postgresql://sankyu:sankyu123@localhost:5436/sankyu_assets
+    echo         DATABASE_URL=postgresql://sankyu:sankyu123@localhost:5432/sankyu_assets
     echo       ^(postgresql+psycopg:// juga diterima^)
 )
 
